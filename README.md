@@ -54,9 +54,12 @@ Proje, tersine mühendislik ile cihazın çalışma prensipleri çözülerek olu
 
 ## 🔧 Kurulum Rehberi
 
+📖 **Kurulum için rehberimize göz atın:**  
+👉 [Wiki: Kurulum Rehberi](https://github.com/omerfaruk-aran/caysever_robotea/wiki/Kurulum)
+
 1. **ESP32 Firmware Yükleme:**  
    - Cihazın içini açarak ESP32 mikrodenetleyicisine bağlantı sağlanmalıdır.  
-   - Bağlantı noktalarını gösteren resimlerle rehber Wiki sayfasında sunulacaktır.  
+   - Bağlantı noktalarını gösteren resimlerle rehber Wiki sayfasında sunulmuştur.  
 
 2. **ESPHome/Home Assistant Entegrasyonu:**  
    - ESPHome dosyasını yükleyerek cihazınızı Home Assistant ile kontrol edebilirsiniz.
@@ -90,9 +93,3 @@ Bu projeyi açık kaynak olarak paylaşmamın temel amacı, kullanıcıların ih
 Kullanıcılar sorun bildirerek veya projeyi fork edip **Pull Request (PR)** göndererek yazılım tarafında katkı sağlayabilirler.  
 **Katkılarınız için teşekkürler!**  
 Sorularınız veya önerileriniz için lütfen [GitHub Issues](https://github.com/omerfaruk-aran/caysever_robotea/issues) sayfasını kullanın.
-
----
-
-## 📎 Lisans
-
-Bu proje açık kaynak olarak sunulmuştur. Tüm haklar saklıdır.
