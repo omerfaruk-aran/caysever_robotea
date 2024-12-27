@@ -1,0 +1,37 @@
+name: Build and Test
+on:
+  push:
+    paths-ignore:
+      - 'README.md'
+      - 'example.yaml'
+      - 'SECURITY.md'
+      - 'LICENSE'
+      - 'CONTRIBUTING.md'
+      - '.github/**'
+  pull_request:
+    paths-ignore:
+      - 'README.md'
+      - 'example.yaml'
+      - 'SECURITY.md'
+      - 'LICENSE'
+      - 'CONTRIBUTING.md'
+      - '.github/**'
+      
+jobs:
+  framework-arduino:
+    runs-on: ubuntu-latest     
+    steps:
+    - uses: actions/checkout@v3
+    - uses: esphome/build-action@v3.1.0
+      id: esphome-build
+      with:
+        yaml_file: .github/conf_arduino.yml
+  
+  #framework-espidf:
+  #  runs-on: ubuntu-latest     
+  #  steps:
+  #  - uses: actions/checkout@v3
+  #  - uses: esphome/build-action@v3.1.0
+  #    id: esphome-build
+  #    with:
+  #      yaml_file: .github/conf_esp_idf.yml

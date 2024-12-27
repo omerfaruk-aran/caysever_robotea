@@ -1,0 +1,47 @@
+esphome:
+  name: arduino
+  
+esp32:
+  board: esp32doit-devkit-v1
+  framework:
+    type: arduino
+
+external_components:
+- source: 
+    type: local
+    path: /github/workspace/components
+    
+
+caysever_robotea:
+  id: caysever
+  sensor: ntc_temperature
+  active_mode_sensor:
+    name: "Aktif Mod"
+  mama_suyu_switch:
+    name: Mama Suyu
+  su_kaynatma_switch:
+    name: Su Kaynatma
+  #filtre_kahve: true
+  cay_demleme:
+    name: "Çay Demleme"
+
+
+sensor:
+  - platform: adc
+    id: adc_sensor
+    pin: GPIO35
+    attenuation: 12db
+    update_interval: 2s
+  - platform: resistance
+    sensor: adc_sensor
+    configuration: DOWNSTREAM  # Sabit direnç aşağı yönlü bağlandı
+    resistor: 10000
+    id: resistance_sensor
+  - platform: ntc
+    sensor: resistance_sensor
+    name: "NTC Sıcaklık"
+    calibration:
+      b_constant: 3950
+      reference_temperature: 25°C
+      reference_resistance: 34000
+    id: ntc_temperature
