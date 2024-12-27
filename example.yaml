@@ -1,0 +1,79 @@
+esphome:
+  name: robotea
+  friendly_name: RoboTea
+
+esp32:
+  board: esp32doit-devkit-v1
+  framework:
+    type: arduino
+
+web_server:
+  port: 80
+
+# Enable logging
+logger:
+  level: INFO
+  logs:
+    component: INFO
+    caysever_robotea: INFO
+
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "api_encryption" # !!!DEĞİŞTİR!!!
+
+ota:
+  - platform: esphome
+    password: "ota_password" # !!!DEĞİŞTİR!!!
+
+# WiFi parolasını girin!
+wifi:
+  ssid: "My WiFi Name" # !!!DEĞİŞTİR!!!
+  password: "My WiFi Password" # !!!DEĞİŞTİR!!!
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "RoboTea"
+    password: "ap_password" # !!!DEĞİŞTİR!!!
+
+captive_portal:
+
+external_components:
+  - source: github://omerfaruk-aran/caysever_robotea@main
+    components: [caysever_robotea]
+    refresh: 0s
+
+caysever_robotea:
+  id: caysever
+  sensor: ntc_temperature
+  active_mode_sensor:
+    name: "Aktif Mod"
+  mama_suyu_switch:
+    name: Mama Suyu
+  su_kaynatma_switch:
+    name: Su Kaynatma
+  #filtre_kahve: true
+  cay_demleme:
+    name: "Çay Demleme"
+
+
+sensor:
+  - platform: adc
+    id: adc_sensor
+    pin: GPIO35
+    attenuation: 12db
+    update_interval: 2s
+  - platform: resistance
+    sensor: adc_sensor
+    configuration: DOWNSTREAM  # Sabit direnç aşağı yönlü bağlandı
+    resistor: 10000
+    id: resistance_sensor
+  - platform: ntc
+    sensor: resistance_sensor
+    name: "NTC Sıcaklık"
+    calibration:
+      b_constant: 3950
+      reference_temperature: 25°C
+      reference_resistance: 34000
+    id: ntc_temperature
