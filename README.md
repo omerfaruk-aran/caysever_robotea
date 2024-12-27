@@ -1,4 +1,4 @@
-# ☕️ Karaca Çaysever Robotea Pro Kettle/Çaycı Firmware Projesi (ESP32 Tabanlı)
+# ☕️ Karaca Çaysever Robotea Pro Connect 4in1 ESPHome Projesi
 
 Bu proje, **Karaca Çaysever Robotea Pro Connect 4in1** cihazı için geliştirilmiştir. Firmware, ESP32 mikrodenetleyicisi kullanılarak cihazın mevcut özelliklerini iyileştirmek ve yeni işlevler kazandırmak amacıyla tasarlanmıştır.
 
