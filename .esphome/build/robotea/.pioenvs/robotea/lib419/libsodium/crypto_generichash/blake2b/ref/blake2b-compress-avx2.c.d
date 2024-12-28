@@ -1,0 +1,9 @@
+.pioenvs/robotea/lib419/libsodium/crypto_generichash/blake2b/ref/blake2b-compress-avx2.c.o: \
+ .piolibdeps/robotea/libsodium/libsodium/src/libsodium/crypto_generichash/blake2b/ref/blake2b-compress-avx2.c \
+ .piolibdeps/robotea/libsodium/libsodium/src/libsodium/crypto_generichash/blake2b/ref/blake2.h \
+ .piolibdeps/robotea/libsodium/libsodium/src/libsodium/include/sodium/crypto_generichash_blake2b.h \
+ .piolibdeps/robotea/libsodium/libsodium/src/libsodium/include/sodium/export.h \
+ .piolibdeps/robotea/libsodium/libsodium/src/libsodium/include/sodium/export.h \
+ .piolibdeps/robotea/libsodium/libsodium/src/libsodium/include/sodium/private/common.h \
+ .piolibdeps/robotea/libsodium/libsodium/src/libsodium/include/sodium/private/sse2_64_32.h \
+ .piolibdeps/robotea/libsodium/libsodium/src/libsodium/include/sodium/private/common.h
