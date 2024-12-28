@@ -10,6 +10,8 @@ on:
       - 'LICENSE'
       - 'CONTRIBUTING.md'
       - '.github/**'
+      - 'platformio.ini'
+      - 'src/**'
   pull_request:
     paths-ignore:
       - 'README.md'
@@ -18,6 +20,8 @@ on:
       - 'LICENSE'
       - 'CONTRIBUTING.md'
       - '.github/**'
+      - 'platformio.ini'
+      - 'src/**'
 
 jobs:
   build:
@@ -26,18 +30,13 @@ jobs:
     steps:
     - uses: actions/checkout@v3
 
-    # Install dependencies
-    - name: Set up Python and Install ESPHome
+    # Install ESPHome CLI
+    - name: Install ESPHome
       run: |
         python3 -m pip install --upgrade pip
         python3 -m pip install esphome
 
-    - name: Set up PlatformIO and Libraries
+    # Compile the ESPHome configuration
+    - name: Compile ESPHome YAML
       run: |
-        python3 -m pip install platformio
-        platformio lib install "arduino-libraries/WiFi@^1.2.7"
-
-    # Run the ESPHome build process
-    - uses: esphome/build-action@v3.1.0
-      with:
-        yaml_file: .github/conf_arduino.yml
+        esphome compile .github/conf_arduino.yml
