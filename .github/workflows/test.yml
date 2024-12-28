@@ -24,9 +24,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: esphome/build-action@v3.1.0
-      id: esphome-build
       with:
         yaml_file: .github/conf_arduino.yml
+        platformio_args: --board esp32doit-devkit-v1 --framework arduino
   
   #framework-espidf:
   #  runs-on: ubuntu-latest     
