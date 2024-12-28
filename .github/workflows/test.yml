@@ -1,4 +1,5 @@
 name: Build and Test
+
 on:
   workflow_dispatch:
   push:
@@ -17,31 +18,28 @@ on:
       - 'LICENSE'
       - 'CONTRIBUTING.md'
       - '.github/**'
-      
+
 jobs:
-  framework-arduino:
+  build:
     runs-on: ubuntu-latest
+
     steps:
+    # Repository'yi klonla
     - uses: actions/checkout@v3
 
-    # ESPHome Builder işlemi
-    - uses: esphome/build-action@v3.1.0
-      id: esphome-build
-      with:
-        yaml_file: .github/conf_arduino.yml
-
-    # .esphome klasörünü tanımlama
+    # PlatformIO kurulumu
     - name: Set up PlatformIO
       run: |
-        mkdir -p ~/.platformio
-        cp -r .esphome/* ~/.platformio/
+        python3 -m pip install platformio
         pio pkg install --library "arduino-libraries/WiFi@^1.2.7"
-  
-  #framework-espidf:
-  #  runs-on: ubuntu-latest     
-  #  steps:
-  #  - uses: actions/checkout@v3
-  #  - uses: esphome/build-action@v3.1.0
-  #    id: esphome-build
-  #    with:
-  #      yaml_file: .github/conf_esp_idf.yml
+
+    # .esphome dosyalarını yükleme (varsa)
+    - name: Copy .esphome Files
+      run: |
+        mkdir -p ~/.platformio
+        cp -r .esphome/* ~/.platformio/ || echo ".esphome directory not found"
+
+    # ESPHome ile derleme
+    - uses: esphome/build-action@v3.1.0
+      with:
+        yaml_file: .github/conf_arduino.yml
