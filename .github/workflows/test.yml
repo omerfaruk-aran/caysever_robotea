@@ -1,7 +1,6 @@
 name: Build and Test
 
 on:
-  workflow_dispatch:
   push:
     paths-ignore:
       - 'README.md'
@@ -24,17 +23,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # Repository'yi klonla
     - uses: actions/checkout@v3
 
-    # PlatformIO kurulumu
+    # Install dependencies
+    - name: Set up Python and Install ESPHome
+      run: |
+        python3 -m pip install --upgrade pip
+        python3 -m pip install esphome
+
     - name: Set up PlatformIO and Libraries
       run: |
         python3 -m pip install platformio
         platformio lib install "arduino-libraries/WiFi@^1.2.7"
-        platformio lib install esphome
 
-    # ESPHome ile derleme
+    # Run the ESPHome build process
     - uses: esphome/build-action@v3.1.0
       with:
         yaml_file: .github/conf_arduino.yml
