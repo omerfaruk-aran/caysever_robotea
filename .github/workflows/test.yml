@@ -20,13 +20,17 @@ on:
       
 jobs:
   framework-arduino:
-    runs-on: ubuntu-latest     
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
+
+    # ESPHome Builder işlemi
     - uses: esphome/build-action@v3.1.0
+      id: esphome-build
       with:
         yaml_file: .github/conf_arduino.yml
-        platformio_args: --board esp32doit-devkit-v1 --framework arduino
+
+    # .esphome klasörünü tanımlama
     - name: Set up PlatformIO
       run: |
         mkdir -p ~/.platformio
