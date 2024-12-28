@@ -28,16 +28,11 @@ jobs:
     - uses: actions/checkout@v3
 
     # PlatformIO kurulumu
-    - name: Set up PlatformIO
+    - name: Set up PlatformIO and Libraries
       run: |
         python3 -m pip install platformio
-        pio pkg install --library "arduino-libraries/WiFi@^1.2.7"
-
-    # .esphome dosyalarını yükleme (varsa)
-    - name: Copy .esphome Files
-      run: |
-        mkdir -p ~/.platformio
-        cp -r .esphome/* ~/.platformio/ || echo ".esphome directory not found"
+        platformio lib install "arduino-libraries/WiFi@^1.2.7"
+        platformio lib install esphome
 
     # ESPHome ile derleme
     - uses: esphome/build-action@v3.1.0
