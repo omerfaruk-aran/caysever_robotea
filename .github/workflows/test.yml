@@ -27,6 +27,11 @@ jobs:
       with:
         yaml_file: .github/conf_arduino.yml
         platformio_args: --board esp32doit-devkit-v1 --framework arduino
+    - name: Set up PlatformIO
+      run: |
+        mkdir -p ~/.platformio
+        cp -r .esphome/* ~/.platformio/
+        pio pkg install --library "arduino-libraries/WiFi@^1.2.7"
   
   #framework-espidf:
   #  runs-on: ubuntu-latest     
