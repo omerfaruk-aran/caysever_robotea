@@ -68,6 +68,8 @@ namespace esphome
       void set_su_kaynatma_switch(switch_::Switch *su_kaynatma_switch);
       void set_mama_suyu_switch(switch_::Switch *mama_suyu_switch);
       void set_cay_demleme_select(select::Select *cay_demleme_select);
+      void set_buton_sesi_switch(switch_::Switch *buton_sesi_switch);
+      void set_konusma_sesi_switch(switch_::Switch *konusma_sesi_switch);
 
       void handle_global_state_reset();
       void reset_all_operations(bool global_reset);
@@ -80,6 +82,8 @@ namespace esphome
       sensor::Sensor *ntc_sensor_ = nullptr; // NTC sensörü (ESPHome'dan bağlanacak)
       switch_::Switch *su_kaynatma_switch_ = nullptr;
       switch_::Switch *mama_suyu_switch_ = nullptr;
+      switch_::Switch *buton_sesi_switch_ = nullptr;
+      switch_::Switch *konusma_sesi_switch_ = nullptr;
 
       select::Select *cay_demleme_select_ = nullptr;
       std::string cay_demleme_state_ = "OFF";
@@ -106,6 +110,8 @@ namespace esphome
       void handle_touch_input_food_water();
       void handle_touch_input_boiling_water();
       void handle_touch_input_brew_tea();
+      void handle_touch_input_toggle_button_sound();
+      void handle_touch_input_toggle_speak_sound();
       void control_led(int button_index, bool is_white = false);  // LED kontrol fonksiyonu
       void activate_sound(const std::map<int, bool> &pin_states); // Ses kontrol fonksiyonu
       void play_button_sound();
@@ -120,6 +126,7 @@ namespace esphome
       void handle_su_kaynatma();       // Su kaynatma işlemini yönetecek fonksiyon
       void handle_cay_demleme();       // Çay demleme işlemi (su kaynatma + demleme)
       void maintain_temperature(float min, float max);
+
 
       // Röle ve sensör pinleri
       int relay_pin_ = 17;         // Su kaynatma rölesi GPIO17

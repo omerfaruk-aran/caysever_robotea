@@ -137,6 +137,8 @@ namespace esphome
                 // Dokunmatik girişlerini yönet
                 this->handle_touch_input();
             }
+            this->handle_touch_input_toggle_button_sound();
+            this->handle_touch_input_toggle_speak_sound();
         }
 
         void CayseverRobotea::led_blink(int pin, int times, int delay_ms)
@@ -181,9 +183,14 @@ namespace esphome
         {
             // Dokunmatik pinin durumu
             bool touch_value = digitalRead(this->touch_pins_[0]) == LOW;
+            bool touch2 = digitalRead(this->touch_pins_[1]) == LOW;
 
             if (touch_value && !this->previous_touch_states_[0])
             {
+                if (touch2)
+                {
+                    return; // İki tuşa aynı anda basıldığında işlemi iptal et
+                }
                 this->play_button_sound();
                 this->update_mama_suyu(!this->touch_states_[0]);
             }
@@ -194,9 +201,14 @@ namespace esphome
         {
             // Dokunmatik pinin durumu
             bool touch_value = digitalRead(this->touch_pins_[2]) == LOW;
+            bool touch2 = digitalRead(this->touch_pins_[3]) == LOW;
 
             if (touch_value && !this->previous_touch_states_[2])
             {
+                if (touch2)
+                {
+                    return; // İki tuşa aynı anda basıldığında işlemi iptal et
+                }
                 this->play_button_sound();
                 this->update_su_kaynatma(!this->touch_states_[2]);
             }
@@ -212,15 +224,24 @@ namespace esphome
 
             // Dokunmatik pinin durumu
             bool touch_value = digitalRead(this->touch_pins_[3]) == LOW;
+            bool touch2 = digitalRead(this->touch_pins_[2]) == LOW;
 
             if (touch_value && !this->previous_touch_states_[3])
             {
+                if (touch2)
+                {
+                    return; // İki tuşa aynı anda basıldığında işlemi iptal et
+                }
                 // Çay Demleme'e basıldı (ON)
                 touch_start_time = this->current_time_;
                 ESP_LOGI("CayseverRobotea", "Çay Demleme basıldı (ON).");
             }
             else if (!touch_value && this->previous_touch_states_[3])
             {
+                if (touch2)
+                {
+                    return; // İki tuşa aynı anda basıldığında işlemi iptal et
+                }
                 // Çay Demleme bırakıldı (OFF)
                 unsigned long press_duration = this->current_time_ - touch_start_time;
 
@@ -261,6 +282,81 @@ namespace esphome
             // Önceki durumu güncelle
             this->previous_touch_states_[3] = touch_value;
         }
+
+        void CayseverRobotea::handle_touch_input_toggle_button_sound()
+        {
+            static unsigned long touch_start_time = 0;              // Başlangıç zamanı
+            static bool is_pressed = false;                         // Basılı durum
+            bool touch1 = digitalRead(this->touch_pins_[0]) == LOW; // Tuş 1 durumu
+            bool touch2 = digitalRead(this->touch_pins_[1]) == LOW; // Tuş 2 durumu
+
+            if (touch1 && touch2)
+            {
+                if (!is_pressed)
+                {
+                    touch_start_time = this->current_time_; // İlk basılı zamanı kaydet
+                    is_pressed = true;
+                }
+                else if (this->current_time_ - touch_start_time >= 2200)
+                { // 3 saniye kontrolü
+                    if (this->buton_sesi_switch_ != nullptr)
+                    {
+                        bool new_state = !this->buton_sesi_switch_->state;  // Durumu değiştir
+                        this->buton_sesi_switch_->publish_state(new_state); // Yeni durumu yayınla
+                        ESP_LOGI(TAG, "Buton sesi %s yapıldı.", new_state ? "aktif" : "pasif");
+
+                        this->activate_sound(std::map<int, bool>{
+                            {this->sound_pins_[0], true}, // GPIO4: HIGH
+                            {this->sound_pins_[2], true}, // GPIO32: HIGH
+                            {this->sound_pins_[1], false} // GPIO19: LOW
+                        });
+                    }
+                    is_pressed = false; // İşlem tamamlandı, basılı durumu sıfırla
+                }
+            }
+            else
+            {
+                is_pressed = false; // Her iki tuş da basılı değilse sıfırla
+            }
+        }
+
+        void CayseverRobotea::handle_touch_input_toggle_speak_sound()
+        {
+            static unsigned long touch_start_time = 0;              // Başlangıç zamanı
+            static bool is_pressed = false;                         // Basılı durum
+            bool touch1 = digitalRead(this->touch_pins_[2]) == LOW; // Tuş 1 durumu
+            bool touch2 = digitalRead(this->touch_pins_[3]) == LOW; // Tuş 2 durumu
+
+            if (touch1 && touch2)
+            {
+                if (!is_pressed)
+                {
+                    touch_start_time = this->current_time_; // İlk basılı zamanı kaydet
+                    is_pressed = true;
+                }
+                else if (this->current_time_ - touch_start_time >= 2200)
+                { // 3 saniye kontrolü
+                    if (this->konusma_sesi_switch_ != nullptr)
+                    {
+                        bool new_state = !this->konusma_sesi_switch_->state;  // Durumu değiştir
+                        this->konusma_sesi_switch_->publish_state(new_state); // Yeni durumu yayınla
+                        ESP_LOGI(TAG, "Konuşma sesi %s yapıldı.", new_state ? "aktif" : "pasif");
+
+                        this->activate_sound(std::map<int, bool>{
+                            {this->sound_pins_[0], true}, // GPIO4: HIGH
+                            {this->sound_pins_[2], true}, // GPIO32: HIGH
+                            {this->sound_pins_[1], false} // GPIO19: LOW
+                        });
+                    }
+                    is_pressed = false; // İşlem tamamlandı, basılı durumu sıfırla
+                }
+            }
+            else
+            {
+                is_pressed = false; // Her iki tuş da basılı değilse sıfırla
+            }
+        }
+
         void CayseverRobotea::visual_feedback_demleme_level(int level)
         {
             for (int i = 0; i < level; i++)
@@ -275,20 +371,20 @@ namespace esphome
             // Son olarak kırmızı LED yanar
             this->control_led(3);
 
-            // Demleme süresini belirle
+            // Demleme süresini belirle kolay kullanım için ters çevrildi.(1=MAX, 2=3/4, 3=2/4, 4=1/4)
             switch (level)
             {
             case 1:
-                this->demleme_suresi_ = 120; // 2 dakika
+                this->demleme_suresi_ = 420; // 7 dakika (Maximum çizgisinin üzerinde doldurulabilir.)
                 break;
             case 2:
-                this->demleme_suresi_ = 210; // 3 dakika 30 saniye
-                break;
-            case 3:
                 this->demleme_suresi_ = 300; // 5 dakika
                 break;
+            case 3:
+                this->demleme_suresi_ = 210; // 3 dakika 30 saniye
+                break;
             case 4:
-                this->demleme_suresi_ = 420; // 7 dakika
+                this->demleme_suresi_ = 120; // 2 dakika
                 break;
             default:
                 this->demleme_suresi_ = 0;
@@ -431,72 +527,116 @@ namespace esphome
 
         void CayseverRobotea::play_button_sound()
         {
-            this->activate_sound(std::map<int, bool>{
-                {this->sound_pins_[0], true}, // GPIO4: HIGH
-                {this->sound_pins_[2], true}, // GPIO32: HIGH
-                {this->sound_pins_[1], false} // GPIO19: LOW
-            });
+
+            if (this->buton_sesi_switch_->state)
+            {
+                this->activate_sound(std::map<int, bool>{
+                    {this->sound_pins_[0], true}, // GPIO4: HIGH
+                    {this->sound_pins_[2], true}, // GPIO32: HIGH
+                    {this->sound_pins_[1], false} // GPIO19: LOW
+                });
+            }
+            else
+            {
+                ESP_LOGI(TAG, "Buton sesi devre dışı, çalınmadı.");
+            }
         }
 
         void CayseverRobotea::play_mama_suyu_hazir_sound()
         {
-
-            // Mama suyu sesi: GPIO4, GPIO19 ve GPIO32 HIGH
-            this->activate_sound(std::map<int, bool>{
-                {this->sound_pins_[0], true}, // GPIO4: HIGH
-                {this->sound_pins_[1], true}, // GPIO19: LOW
-                {this->sound_pins_[2], true}  // GPIO32: HIGH
-            });
+            if (this->konusma_sesi_switch_->state)
+            {
+                // Mama suyu sesi: GPIO4, GPIO19 ve GPIO32 HIGH
+                this->activate_sound(std::map<int, bool>{
+                    {this->sound_pins_[0], true}, // GPIO4: HIGH
+                    {this->sound_pins_[1], true}, // GPIO19: LOW
+                    {this->sound_pins_[2], true}  // GPIO32: HIGH
+                });
+            }
+            else
+            {
+                ESP_LOGI(TAG, "Buton sesi devre dışı, çalınmadı.");
+            }
         }
 
         void CayseverRobotea::play_cay_demleme_start_sound()
         {
-            // Çay demleme sesi: GPIO4 HIGH, diğerleri LOW
-            this->activate_sound(std::map<int, bool>{
-                {this->sound_pins_[0], true},  // GPIO4: HIGH
-                {this->sound_pins_[1], false}, // GPIO19: LOW
-                {this->sound_pins_[2], false}  // GPIO32: HIGH
-            });
+            if (this->konusma_sesi_switch_->state)
+            { // Çay demleme sesi: GPIO4 HIGH, diğerleri LOW
+                this->activate_sound(std::map<int, bool>{
+                    {this->sound_pins_[0], true},  // GPIO4: HIGH
+                    {this->sound_pins_[1], false}, // GPIO19: LOW
+                    {this->sound_pins_[2], false}  // GPIO32: HIGH
+                });
+            }
+            else
+            {
+                ESP_LOGI(TAG, "Buton sesi devre dışı, çalınmadı.");
+            }
         }
 
         void CayseverRobotea::play_cay_demleme_done_sound()
         {
-            // Çay demleme tamam sesi: GPIO4 ve GPIO19 HIGH, GPIO32 LOW
-            this->activate_sound(std::map<int, bool>{
-                {this->sound_pins_[0], true}, // GPIO4: HIGH
-                {this->sound_pins_[1], true}, // GPIO19: LOW
-                {this->sound_pins_[2], false} // GPIO32: HIGH
-            });
+            if (this->konusma_sesi_switch_->state)
+            { // Çay demleme tamam sesi: GPIO4 ve GPIO19 HIGH, GPIO32 LOW
+                this->activate_sound(std::map<int, bool>{
+                    {this->sound_pins_[0], true}, // GPIO4: HIGH
+                    {this->sound_pins_[1], true}, // GPIO19: LOW
+                    {this->sound_pins_[2], false} // GPIO32: HIGH
+                });
+            }
+            else
+            {
+                ESP_LOGI(TAG, "Buton sesi devre dışı, çalınmadı.");
+            }
         }
 
         void CayseverRobotea::play_filtre_kahve_hazirlaniyor_sound()
         {
-            // Filtre kahve hazırlanıyor sesi: GPIO19 HIGH, diğerleri LOW
-            this->activate_sound(std::map<int, bool>{
-                {this->sound_pins_[0], false}, // GPIO4: HIGH
-                {this->sound_pins_[1], true},  // GPIO19: LOW
-                {this->sound_pins_[2], false}  // GPIO32: HIGH
-            });
+            if (this->konusma_sesi_switch_->state)
+            { // Filtre kahve hazırlanıyor sesi: GPIO19 HIGH, diğerleri LOW
+                this->activate_sound(std::map<int, bool>{
+                    {this->sound_pins_[0], false}, // GPIO4: HIGH
+                    {this->sound_pins_[1], true},  // GPIO19: LOW
+                    {this->sound_pins_[2], false}  // GPIO32: HIGH
+                });
+            }
+            else
+            {
+                ESP_LOGI(TAG, "Buton sesi devre dışı, çalınmadı.");
+            }
         }
 
         void CayseverRobotea::play_filtre_kahve_done_sound()
         {
-            // Filtre kahve tamam sesi: GPIO19 ve GPIO32 HIGH, GPIO4 LOW
-            this->activate_sound(std::map<int, bool>{
-                {this->sound_pins_[0], false}, // GPIO4: HIGH
-                {this->sound_pins_[1], true},  // GPIO19: LOW
-                {this->sound_pins_[2], true}   // GPIO32: HIGH
-            });
+            if (this->konusma_sesi_switch_->state)
+            { // Filtre kahve tamam sesi: GPIO19 ve GPIO32 HIGH, GPIO4 LOW
+                this->activate_sound(std::map<int, bool>{
+                    {this->sound_pins_[0], false}, // GPIO4: HIGH
+                    {this->sound_pins_[1], true},  // GPIO19: LOW
+                    {this->sound_pins_[2], true}   // GPIO32: HIGH
+                });
+            }
+            else
+            {
+                ESP_LOGI(TAG, "Buton sesi devre dışı, çalınmadı.");
+            }
         }
 
         void CayseverRobotea::play_su_kaynadi_sound()
         {
-            // Su kaynadı sesi: GPIO32 HIGH, diğerleri LOW
-            this->activate_sound(std::map<int, bool>{
-                {this->sound_pins_[0], false}, // GPIO4: HIGH
-                {this->sound_pins_[1], false}, // GPIO19: LOW
-                {this->sound_pins_[2], true}   // GPIO32: HIGH
-            });
+            if (this->konusma_sesi_switch_->state)
+            { // Su kaynadı sesi: GPIO32 HIGH, diğerleri LOW
+                this->activate_sound(std::map<int, bool>{
+                    {this->sound_pins_[0], false}, // GPIO4: HIGH
+                    {this->sound_pins_[1], false}, // GPIO19: LOW
+                    {this->sound_pins_[2], true}   // GPIO32: HIGH
+                });
+            }
+            else
+            {
+                ESP_LOGI(TAG, "Buton sesi devre dışı, çalınmadı.");
+            }
         }
 
         void CayseverRobotea::activate_sound(const std::map<int, bool> &pin_states)
@@ -999,11 +1139,24 @@ namespace esphome
                 ESP_LOGI("CayseverRobotea", "Çay demleme işlemi başlıyor. Süre: %d saniye.", this->demleme_suresi_);
                 this->cay_demleme_durumu_ = DEMLEME_HAZIRLIK;
 
-                if (this->cay_demleme_select_ != nullptr &&
-                    this->cay_demleme_select_->state != this->cay_demleme_state_)
+                // Select nesnesini güncelle
+                if (this->cay_demleme_select_ != nullptr)
                 {
-                    this->cay_demleme_state_ = this->cay_demleme_select_->state;
-                    this->cay_demleme_select_->publish_state(this->cay_demleme_select_->state);
+                    std::string new_state = "1/4";
+                    if (press_count == 1)
+                    {
+                        new_state = "MAX";
+                    }
+                    else if (press_count == 2)
+                    {
+                        new_state = "3/4";
+                    }
+                    else if (press_count == 3)
+                    {
+                        new_state = "2/4";
+                    }
+                    this->cay_demleme_state_ = new_state;
+                    this->cay_demleme_select_->publish_state(new_state);
                 }
                 break;
             }
@@ -1066,6 +1219,34 @@ namespace esphome
             else
             {
                 this->set_mode(MODE_NONE, 0);
+            }
+        }
+
+        void CayseverRobotea::set_buton_sesi_switch(switch_::Switch *buton_sesi_switch)
+        {
+            this->buton_sesi_switch_ = buton_sesi_switch;
+
+            if (this->buton_sesi_switch_ != nullptr)
+            {
+                ESP_LOGI("CayseverRobotea", "Buton sesi switch başarıyla ayarlandı.");
+                this->buton_sesi_switch_->add_on_state_callback([this](bool state)
+                                                                { ESP_LOGI("CayseverRobotea", "Buton sesi switch durumu değişti: %s", state ? "ON" : "OFF"); });
+            }
+            else
+            {
+                ESP_LOGW("CayseverRobotea", "Buton sesi switch NULL!");
+            }
+        }
+
+        void CayseverRobotea::set_konusma_sesi_switch(switch_::Switch *konusma_sesi_switch)
+        {
+            this->konusma_sesi_switch_ = konusma_sesi_switch;
+
+            if (this->konusma_sesi_switch_ != nullptr)
+            {
+                ESP_LOGI("CayseverRobotea", "Konuşma sesi switch başarıyla ayarlandı.");
+                this->konusma_sesi_switch_->add_on_state_callback([this](bool state)
+                                                                  { ESP_LOGI("CayseverRobotea", "Konuşma sesi switch durumu değişti: %s", state ? "ON" : "OFF"); });
             }
         }
 

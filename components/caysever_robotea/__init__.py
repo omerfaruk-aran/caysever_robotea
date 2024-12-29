@@ -21,6 +21,8 @@ CONF_CAY_DEMLEME = "cay_demleme"
 CONF_SU_KAYNATMA = "su_kaynatma_switch"
 # CONF_FILTRE_KAHVE = "filtre_kahve" //TODO
 CONF_MAMA_SUYU = "mama_suyu_switch"
+CONF_BUTON_SESI_SWITCH = "buton_sesi_switch"
+CONF_KONUSMA_SESI_SWITCH = "konusma_sesi_switch"
 
 CAY_DEMLEME_LEVEL_OPTIONS = [
     "1/4",
@@ -52,6 +54,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_MAMA_SUYU): SWITCH_SCHEMA,
         cv.Optional(CONF_CAY_DEMLEME): SELECT_SCHEMA,
         cv.Optional(CONF_ACTIVE_MODE_SENSOR): TEXT_SENSOR_SCHEMA,
+        cv.Optional(CONF_BUTON_SESI_SWITCH): cv.use_id(switch.Switch),
+        cv.Optional(CONF_KONUSMA_SESI_SWITCH): cv.use_id(switch.Switch),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -67,7 +71,15 @@ async def to_code(config):
         level_select = await select.new_select(conf, options=CAY_DEMLEME_LEVEL_OPTIONS)
         await cg.register_component(level_select, conf)
         cg.add(var.set_cay_demleme_select(level_select))
-        
+
+    if CONF_BUTON_SESI_SWITCH in config:
+        buton_sesi = await cg.get_variable(config[CONF_BUTON_SESI_SWITCH])
+        cg.add(var.set_buton_sesi_switch(buton_sesi))
+    
+    if CONF_KONUSMA_SESI_SWITCH in config:
+        konusma_sesi = await cg.get_variable(config[CONF_KONUSMA_SESI_SWITCH])
+        cg.add(var.set_konusma_sesi_switch(konusma_sesi))
+
     for s in [
         CONF_SU_KAYNATMA,
         CONF_MAMA_SUYU,
@@ -84,5 +96,5 @@ async def to_code(config):
         mode_sens = cg.new_Pvariable(sens_conf[CONF_ID])
         await text_sensor.register_text_sensor(mode_sens, sens_conf)
         cg.add(var.set_mode_sensor(mode_sens))
-        
+
     await cg.register_component(var, config)
