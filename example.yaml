@@ -56,6 +56,21 @@ caysever_robotea:
   #filtre_kahve: true
   cay_demleme:
     name: "Çay Demleme"
+  buton_sesi_switch: buton_sesi
+  konusma_sesi_switch: konusma_sesi
+
+switch:
+  - platform: template
+    name: "Buton Sesi"
+    id: buton_sesi
+    restore_mode: RESTORE_DEFAULT_ON
+    optimistic: true
+
+  - platform: template
+    name: "Konuşma Sesi"
+    id: konusma_sesi
+    restore_mode: RESTORE_DEFAULT_ON
+    optimistic: true
 
 
 sensor:
