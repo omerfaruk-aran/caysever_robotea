@@ -1,95 +1,101 @@
 # ☕️ Karaca Çaysever Robotea Pro Connect 4in1 ESPHome Projesi
 
-Bu proje, **Karaca Çaysever Robotea Pro Connect 4in1** cihazı için geliştirilmiştir. Firmware, ESP32 mikrodenetleyicisi kullanılarak cihazın mevcut özelliklerini iyileştirmek ve yeni işlevler kazandırmak amacıyla tasarlanmıştır.
-
-📢 **Uyarı:** Bu yazılım şu anda yalnızca **Karaca Çaysever Robotea Pro Connect 4in1** modelinde test edilmiştir. Diğer modellerde farklılık gösterebilir. Cihaz üzerinde yapılan değişiklikler cihazınızın garanti kapsamından çıkmasına neden olabilir.
+*Akıllı kettle deneyiminizi bir üst seviyeye taşıyın!*
 
 ---
 
-## 📌 Önemli Hususlar
+## 📌 Proje Hakkında
 
-⚠️ **Garanti İhlali:**  
-Bu firmware, cihazın içini açarak ESP32'ye yazılım yüklemeyi gerektirir. Bu işlem cihazın garanti kapsamı dışında kalmasına neden olur.
+Bu proje, **Karaca Çaysever Robotea Pro Connect 4in1** cihazını ESP32 mikrodenetleyicisi ile geliştirmek için hazırlanmıştır. Yazılım, cihazın mevcut işlevselliğini optimize ederken, Home Assistant ve diğer akıllı ev platformlarına tam entegrasyon sağlar.
 
-⚠️ **Sorumluluk Reddi:**  
-Bu proje tamamen eğitsel ve deneysel amaçlar için hazırlanmıştır. Yapılan değişikliklerden kaynaklanan herhangi bir sorundan veya zarardan **sorumlu değilim**.
-
-⚡ **Elektrik Güvenliği:**  
-Cihaz fişe takılıyken hiçbir işlem yapmayınız. Elektrik çarpması riski bulunmaktadır.
-
-🛠️ **Geliştirme Süreci:**  
-Proje, tersine mühendislik ile cihazın çalışma prensipleri çözülerek oluşturulmuştur.  
-Şu an **filtre kahve işlevi** aktif değildir; ilerleyen zamanlarda geliştirilecektir.
+🔔 **Uyarı:**  
+Proje kapsamında cihaz üzerinde yapılan değişiklikler, cihazın garanti kapsamı dışında kalmasına neden olabilir. Lütfen cihazınıza müdahale etmeden önce bunu göz önünde bulundurun.
 
 ---
 
-## ✨ Proje Özellikleri
+## ✨ Temel Özellikler
 
-### 🌟 Enerji Tasarrufu
-- Demleme ve sıcaklık koruma süreçlerinde optimize edilmiş rezistans kontrolü sayesinde gereksiz enerji tüketimi önlenmiştir.
+### 🌡️ **Anlık Sıcaklık Takibi**
+- Suyun sıcaklığını Home Assistant üzerinden izleyin.
+- Sıcaklık koruma modları sayesinde enerji tasarrufu yapın.
 
-### ☕ Demleme Seviyesi İşlevi
-- 4 farklı seviye: **1/4, 2/4, 3/4 ve MAX** arasında seçim yapabilme.
-- Seviye seçimi ile rezistans yalnızca ihtiyaç kadar çalışır ve su bittiğinde otomatik kapanır.  
-  ✔️ Cihazın korunması ve enerji tasarrufu sağlanır.  
-  ✔️ Görsel ve sesli bildirimlerle kullanıcı bilgilendirilir.
+### ☕ **Gelişmiş Demleme Seviyeleri**
+- 4 farklı demleme seviyesi: **1/4, 2/4, 3/4, MAX**.
+- Her seviyeye göre belirlenen süre sonunda rezistans kapanır, enerji tasarrufu sağlanır.
 
-### 🔄 Kettle Koruma Modu
-- Cihaz çalışırken kettle kaldırıldığında geçici olarak koruma moduna geçer. Yerine koyulduğunda işlem devam eder.
+### 🔄 **Kettle Koruma Modu**
+- Kettle kaldırıldığında geçici koruma modu.
+- Yerine koyulduğunda işlemler kaldığı yerden devam eder.
 
-### 🌐 ESPHome ve Home Assistant Entegrasyonu
-- **Akıllı ev sistemlerine entegrasyon.**  
-- Telefon uygulamaları ve sesli asistanlarla kontrol imkanı.
+### 🔊 **Sesli ve Görsel Geri Bildirim**
+- **Buton Sesi:** Kullanıcı geri bildirimi için dokunmatik buton sesleri.  
+- **Konuşma Sesi:** İşlemlerin durumuna göre sesli uyarılar.  
 
-### 🌡️ Anlık Sıcaklık Takibi
-- Cihazdaki suyun sıcaklığını Home Assistant üzerinden anlık olarak izleyebilirsiniz.
+### 🌐 **Home Assistant Entegrasyonu**
+- ESPHome ile cihazınızı akıllı ev sistemleriyle entegre edin.
+- Cihazınızı telefon veya sesli asistanlarla kontrol edin.
 
-### 🔥 Sıcaklık Koruma Modu
-- Gereksiz rezistans çalışmasını engelleyerek suyun sıcaklığını korur.
-
-### 🔍 Aktif Mod Sensörü
-- Cihazın hangi modda çalıştığını takip edebilmek için sensör desteği eklenmiştir.
+### 🛠️ **Gelişmiş Özellikler**
+- **Mod Sensörü:** Aktif modu takip edebilme.
+- **Optimize Rezistans Kullanımı:** Gereksiz enerji tüketimi minimuma indirildi.
 
 ---
 
-## 🔧 Kurulum Rehberi
+## 🚀 Kurulum ve Kullanım
 
-📖 **Kurulum için rehberimize göz atın:**  
-👉 [Wiki: Kurulum Rehberi](https://github.com/omerfaruk-aran/caysever_robotea/wiki/Kurulum)
+Kurulum adımları ve teknik detaylar için lütfen Wiki sayfamıza göz atın.  
+👉 **[Wiki: Kurulum Rehberi](https://github.com/omerfaruk-aran/caysever_robotea/wiki/Kurulum)**  
 
-1. **ESP32 Firmware Yükleme:**  
-   - Cihazın içini açarak ESP32 mikrodenetleyicisine bağlantı sağlanmalıdır.  
-   - Bağlantı noktalarını gösteren resimlerle rehber Wiki sayfasında sunulmuştur.  
+### Hızlı Bakış:
+1. **ESP32 Firmware Yükleme**  
+   - Cihazın içini açarak ESP32 mikrodenetleyicisine bağlantı sağlayın.  
+   - Pin bağlantıları için görsel rehberi Wiki'de bulabilirsiniz.
 
-2. **ESPHome/Home Assistant Entegrasyonu:**  
-   - ESPHome dosyasını yükleyerek cihazınızı Home Assistant ile kontrol edebilirsiniz.
+2. **ESPHome/Home Assistant Entegrasyonu**  
+   - `example.yaml` dosyasını ESPHome platformuna yükleyerek entegrasyonu tamamlayın.
 
-3. **Yazılım Güncellemeleri:**  
-   - Projeyi GitHub üzerinden takip ederek en son güncellemeleri yükleyebilirsiniz.
+3. **Yazılım Güncellemeleri**  
+   - Güncellemeleri GitHub üzerinden takip edin ve en yeni sürümleri yükleyin.
 
 ---
 
 ## ⚠️ Dikkat Edilmesi Gerekenler
 
-- **Boş Çalışma Sorunu Çözümü:**  
-  Orijinal cihazda demleme ünitesinin rezistansı sabit 7 dakika çalışıyordu.  
-  Bu, suyun tamamen bitmesi durumunda cihazın zarar görmesine ve enerji israfına yol açıyordu.  
-  Yeni yazılım bu sorunu çözüyor. Su bittiğinde rezistans kapanır ve cihaz korunur.
+- **Garanti İhlali:**  
+  Proje cihazın içini açmayı gerektirir. Bu, cihazın garanti dışı kalmasına yol açabilir.
 
-- **Demleme Süresi ve Seviyeleri:**  
-  Demleme seviyesine bağlı olarak belirlenen süre sonunda rezistans kapatılarak cihaz korunur.  
-  Kullanıcıdan bağımsız olarak enerji tasarrufu ve uzun ömürlü kullanım sağlanır.
+- **Elektrik Güvenliği:**  
+  Cihaz fişe takılıyken hiçbir müdahalede bulunmayın. Elektrik çarpması riski bulunmaktadır.
+
+- **Boş Çalışma Koruması:**  
+  Orijinal yazılımdaki boş çalışmaya bağlı sorunlar, bu firmware ile çözülmüştür. Su bittiğinde rezistans otomatik olarak kapanır.
 
 ---
 
-## 🌍 Projeyi Geliştirme Amacı
+## 🎯 Geliştirme Amacı
 
-Bu projeyi açık kaynak olarak paylaşmamın temel amacı, kullanıcıların ihtiyaçlarına göre geri bildirimler almak ve yazılımı daha da geliştirmektir. Uzun vadede tam stabil bir akıllı kettle/çaycı oluşturmayı hedefliyorum.
+Bu proje, cihazın işlevselliğini artırmak ve akıllı ev sistemlerine entegrasyon sağlamak için tasarlandı. Açık kaynak olarak paylaşılan bu yazılım, kullanıcı geri bildirimleri ile sürekli olarak geliştirilecektir.
 
 ---
 
 ## 🛠️ Katkıda Bulunun
 
-Kullanıcılar sorun bildirerek veya projeyi fork edip **Pull Request (PR)** göndererek yazılım tarafında katkı sağlayabilirler.  
-**Katkılarınız için teşekkürler!**  
-Sorularınız veya önerileriniz için lütfen [GitHub Issues](https://github.com/omerfaruk-aran/caysever_robotea/issues) sayfasını kullanın.
+Projeyi daha iyi hale getirmek için katkıda bulunabilirsiniz:
+- **Sorun Bildirme:** [GitHub Issues](https://github.com/omerfaruk-aran/caysever_robotea/issues) sayfasından sorunları bildirin.
+- **Kod Katkısı:** Projeyi fork ederek geliştirin ve Pull Request (PR) gönderin.
+- **Geri Bildirim:** Yeni özellik önerilerinde bulunun.
+
+---
+
+## 📜 Lisans
+
+Bu proje, MIT lisansı altında açık kaynak olarak sunulmaktadır.  
+Daha fazla bilgi için [LICENSE](LICENSE) dosyasına göz atabilirsiniz.
+
+---
+
+## 📞 İletişim
+
+Sorularınız ve önerileriniz için lütfen [GitHub Issues](https://github.com/omerfaruk-aran/caysever_robotea/issues) sayfasını kullanın.  
+
+İyi demlemeler! ☕
