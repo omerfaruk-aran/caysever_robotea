@@ -2,12 +2,12 @@
 
 *Akıllı kettle deneyiminizi bir üst seviyeye taşıyın!*
 
-![](https://visitor-badge.laobi.icu/badge?page_id=omerfaruk-aran.caysever_robotea)
+![Ziyaretçi Sayacı](https://visitor-badge.laobi.icu/badge?page_id=omerfaruk-aran.caysever_robotea)
 ---
 
 ## 📌 Proje Hakkında
 
-Bu proje, **Karaca Çaysever Robotea Pro Connect 4in1** cihazını ESP32 mikrodenetleyicisi ile geliştirmek için hazırlanmıştır. Yazılım, cihazın mevcut işlevselliğini optimize ederken, Home Assistant ve diğer akıllı ev platformlarına tam entegrasyon sağlar.
+Bu proje, **Karaca Çaysever Robotea Pro Connect 4in1** cihazını ESP32 mikrodenetleyicisi ile geliştirmek için hazırlanmıştır. Mevcut cihaz donanımı tersine mühendislik ile analiz edilerek, orijinal işlevselliği korunmuş ve akıllı ev platformlarına entegrasyonu sağlanmıştır. Cihazın işlevselliği optimize edilerek enerji tasarrufu ve kullanıcı deneyimi artırılmıştır.
 
 🔔 **Uyarı:**  
 Proje kapsamında cihaz üzerinde yapılan değişiklikler, cihazın garanti kapsamı dışında kalmasına neden olabilir. Lütfen cihazınıza müdahale etmeden önce bunu göz önünde bulundurun.
@@ -36,9 +36,11 @@ Proje kapsamında cihaz üzerinde yapılan değişiklikler, cihazın garanti kap
 - ESPHome ile cihazınızı akıllı ev sistemleriyle entegre edin.
 - Cihazınızı telefon veya sesli asistanlarla kontrol edin.
 
-### 🛠️ **Gelişmiş Özellikler**
+### 🛠️ **Yeni Geliştirilen Özellikler**
 - **Mod Sensörü:** Aktif modu takip edebilme.
 - **Optimize Rezistans Kullanımı:** Gereksiz enerji tüketimi minimuma indirildi.
+- **Kritik ve Koruma Modları:** Cihazın güvenliği için özel durum algılama ve LED ile kullanıcı bilgilendirme.
+- **Wi-Fi Durum Bildirimi:** Wi-Fi bağlantı durumu LED yanıp sönme geri bildirimiyle sağlanmaktadır.
 
 ---
 
@@ -75,7 +77,7 @@ Kurulum adımları ve teknik detaylar için lütfen Wiki sayfamıza göz atın.
 
 ## 🎯 Geliştirme Amacı
 
-Bu proje, cihazın işlevselliğini artırmak ve akıllı ev sistemlerine entegrasyon sağlamak için tasarlandı. Açık kaynak olarak paylaşılan bu yazılım, kullanıcı geri bildirimleri ile sürekli olarak geliştirilecektir.
+Bu proje, cihazın işlevselliğini artırmak ve akıllı ev sistemlerine entegrasyon sağlamak için tasarlandı. Açık kaynak olarak paylaşılan bu yazılım, tersine mühendislik teknikleri kullanılarak geliştirilmiştir ve kullanıcı geri bildirimleri ile sürekli olarak iyileştirilecektir.
 
 ---
 
