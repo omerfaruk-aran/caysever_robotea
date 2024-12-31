@@ -47,6 +47,8 @@ external_components:
 caysever_robotea:
   id: caysever
   sensor: ntc_temperature
+  kettle_state_sensor:
+    name: "Kettle Durumu"
   active_mode_sensor:
     name: "Aktif Mod"
   mama_suyu_switch:
@@ -58,6 +60,7 @@ caysever_robotea:
     name: "Çay Demleme"
   buton_sesi_switch: buton_sesi
   konusma_sesi_switch: konusma_sesi
+  su_kontrol_switch: su_kontrol
 
 switch:
   - platform: template
@@ -69,6 +72,12 @@ switch:
   - platform: template
     name: "Konuşma Sesi"
     id: konusma_sesi
+    restore_mode: RESTORE_DEFAULT_ON
+    optimistic: true
+
+  - platform: template
+    name: "Su Kontrolü"
+    id: su_kontrol
     restore_mode: RESTORE_DEFAULT_ON
     optimistic: true
 

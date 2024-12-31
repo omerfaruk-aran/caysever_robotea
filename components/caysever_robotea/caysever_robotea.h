@@ -24,7 +24,8 @@ namespace esphome
     enum KettleDurumu
     {
       NORMAL,
-      KORUMA
+      KORUMA,
+      KRITIK
     };
 
     enum SuKaynatmaDurumu
@@ -62,6 +63,7 @@ namespace esphome
     public:
       void set_modlar(const Modlar &modlar) { this->modlar_ = modlar; }
       void set_mode_sensor(text_sensor::TextSensor *mode_sensor) { this->mode_sensor_ = mode_sensor; }
+      void set_kettle_state_sensor(text_sensor::TextSensor *kettle_state_sensor) { this->kettle_state_sensor_ = kettle_state_sensor; }
       void set_mode(ActiveMode new_mode, int press_count);
 
       void set_ntc_sensor(sensor::Sensor *sensor) { this->ntc_sensor_ = sensor; }
@@ -70,6 +72,7 @@ namespace esphome
       void set_cay_demleme_select(select::Select *cay_demleme_select);
       void set_buton_sesi_switch(switch_::Switch *buton_sesi_switch);
       void set_konusma_sesi_switch(switch_::Switch *konusma_sesi_switch);
+      void set_su_kontrol_switch(switch_::Switch *su_kontrol_switch);
 
       void handle_global_state_reset();
       void reset_all_operations(bool global_reset);
@@ -84,6 +87,7 @@ namespace esphome
       switch_::Switch *mama_suyu_switch_ = nullptr;
       switch_::Switch *buton_sesi_switch_ = nullptr;
       switch_::Switch *konusma_sesi_switch_ = nullptr;
+      switch_::Switch *su_kontrol_switch_ = nullptr;
 
       select::Select *cay_demleme_select_ = nullptr;
       std::string cay_demleme_state_ = "OFF";
@@ -91,14 +95,17 @@ namespace esphome
       Modlar modlar_; // Modlar struct'ı burada saklanacak
       ActiveMode current_mode_{MODE_NONE};
       text_sensor::TextSensor *mode_sensor_{nullptr};
+      text_sensor::TextSensor *kettle_state_sensor_{nullptr};
       const char *active_mode_to_string(ActiveMode mode);
 
       SuKaynatmaDurumu su_kaynatma_durumu_;
       MamaSuyuDurumu mama_suyu_durumu_;
       CayDemlemeDurumu cay_demleme_durumu_;
       KettleDurumu kettle_durumu_ = NORMAL;
+      KettleDurumu previous_mode_ = NORMAL;
 
       void publish_mode_();
+      void publish_kettle_state_();
       void update_su_kaynatma(bool su_kaynatma);
       void update_mama_suyu(bool mama_suyu);
       void update_cay_demleme(const std::string &level);
@@ -112,6 +119,10 @@ namespace esphome
       void handle_touch_input_brew_tea();
       void handle_touch_input_toggle_button_sound();
       void handle_touch_input_toggle_speak_sound();
+      void check_water_level();
+      void handle_protection_mode_leds();
+      void handle_critical_mode_leds();
+      void handle_exit_critical_mode();
       void control_led(int button_index, bool is_white = false);  // LED kontrol fonksiyonu
       void activate_sound(const std::map<int, bool> &pin_states); // Ses kontrol fonksiyonu
       void play_button_sound();
@@ -127,7 +138,6 @@ namespace esphome
       void handle_cay_demleme();       // Çay demleme işlemi (su kaynatma + demleme)
       void maintain_temperature(float min, float max);
 
-
       // Röle ve sensör pinleri
       int relay_pin_ = 17;         // Su kaynatma rölesi GPIO17
       int demleme_relay_pin_ = 18; // Demleme rölesi GPIO18
@@ -139,6 +149,16 @@ namespace esphome
       bool demled_active_ = false;           // DemLED aktif mi?
       unsigned int demleme_suresi_ = 0;      // Demleme Süresi
       int demlenme_seviyesi_ = 0;            // Çay demleme seviyesi
+      bool manual_exit = false;
+
+      unsigned long kritik_sound_start_time_ = 0;
+      bool kritik_sound_active_ = false;
+
+      // LED'lerin önceki durumlarını saklamak için değişkenler
+      bool bayled_previous_state = false;           // BayLED'in önceki durumu
+      bool demled_previous_state = false;           // DemLED'in önceki durumu
+      bool touch0_led_previous_state = false;       // Tuş 1'in önceki led durumu
+      bool touch0_color_led_previous_state = false; // Tuş 1'in önceki led rengi durumu
 
       // Zamanlama ve röle durumları
       unsigned long last_relay_toggle_time_ = 0;   // Son röle değişim zamanı

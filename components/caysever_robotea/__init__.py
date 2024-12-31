@@ -16,6 +16,7 @@ CayseverRoboteaSelect = caysever_ns.class_(
     "CayseverRoboteaSelect", select.Select, cg.Component
 )
 
+CONF_KETTLE_STATE_SENSOR = "kettle_state_sensor"
 CONF_ACTIVE_MODE_SENSOR = "active_mode_sensor"
 CONF_CAY_DEMLEME = "cay_demleme"
 CONF_SU_KAYNATMA = "su_kaynatma_switch"
@@ -23,6 +24,7 @@ CONF_SU_KAYNATMA = "su_kaynatma_switch"
 CONF_MAMA_SUYU = "mama_suyu_switch"
 CONF_BUTON_SESI_SWITCH = "buton_sesi_switch"
 CONF_KONUSMA_SESI_SWITCH = "konusma_sesi_switch"
+CONF_SU_KONTROL_SWITCH = "su_kontrol_switch"
 
 CAY_DEMLEME_LEVEL_OPTIONS = [
     "1/4",
@@ -54,8 +56,10 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_MAMA_SUYU): SWITCH_SCHEMA,
         cv.Optional(CONF_CAY_DEMLEME): SELECT_SCHEMA,
         cv.Optional(CONF_ACTIVE_MODE_SENSOR): TEXT_SENSOR_SCHEMA,
+        cv.Optional(CONF_KETTLE_STATE_SENSOR): TEXT_SENSOR_SCHEMA,
         cv.Optional(CONF_BUTON_SESI_SWITCH): cv.use_id(switch.Switch),
         cv.Optional(CONF_KONUSMA_SESI_SWITCH): cv.use_id(switch.Switch),
+        cv.Optional(CONF_SU_KONTROL_SWITCH): cv.use_id(switch.Switch),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -79,6 +83,10 @@ async def to_code(config):
     if CONF_KONUSMA_SESI_SWITCH in config:
         konusma_sesi = await cg.get_variable(config[CONF_KONUSMA_SESI_SWITCH])
         cg.add(var.set_konusma_sesi_switch(konusma_sesi))
+        
+    if CONF_SU_KONTROL_SWITCH in config:
+        su_kontrol = await cg.get_variable(config[CONF_SU_KONTROL_SWITCH])
+        cg.add(var.set_su_kontrol_switch(su_kontrol))
 
     for s in [
         CONF_SU_KAYNATMA,
@@ -96,5 +104,11 @@ async def to_code(config):
         mode_sens = cg.new_Pvariable(sens_conf[CONF_ID])
         await text_sensor.register_text_sensor(mode_sens, sens_conf)
         cg.add(var.set_mode_sensor(mode_sens))
+
+    if CONF_KETTLE_STATE_SENSOR in config:
+        kettle_state_sens_conf = config[CONF_KETTLE_STATE_SENSOR]
+        kettle_state_sens = cg.new_Pvariable(kettle_state_sens_conf[CONF_ID])
+        await text_sensor.register_text_sensor(kettle_state_sens, kettle_state_sens_conf)
+        cg.add(var.set_kettle_state_sensor(kettle_state_sens))
 
     await cg.register_component(var, config)

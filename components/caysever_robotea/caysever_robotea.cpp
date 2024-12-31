@@ -61,12 +61,19 @@ namespace esphome
             this->su_kaynatma_durumu_ = SU_KAYNATMA_KAPALI;
             this->mama_suyu_durumu_ = MAMA_SUYU_KAPALI;
             this->cay_demleme_durumu_ = DEMLEME_KAPALI;
+
+            this->kettle_durumu_ = NORMAL;
+            this->publish_kettle_state_();
         }
 
         // loop metodu tanımı
         void CayseverRobotea::loop()
         {
             this->current_time_ = millis();
+
+            this->handle_touch_input_toggle_button_sound();
+            this->handle_touch_input_toggle_speak_sound();
+
             // Sensör değerlerini kontrol edin
             if (this->ntc_sensor_)
             {
@@ -74,10 +81,21 @@ namespace esphome
 
                 if (temperature < 0.0f) // Anormal sıcaklık değeri
                 {
-                    if (kettle_durumu_ == NORMAL)
+                    if (this->kettle_durumu_ != KORUMA)
                     {
                         ESP_LOGW("CayseverRobotea", "Kettle kaldırıldı veya NTC sensör hatası. Koruma moduna geçiliyor.");
-                        kettle_durumu_ = KORUMA;
+                        // Önceki durumu kaydet
+                        this->previous_mode_ = kettle_durumu_;
+
+                        this->kettle_durumu_ = KORUMA;
+                        this->publish_kettle_state_();
+
+                        // LED durumlarını kaydet
+                        bayled_previous_state = digitalRead(this->bay_led_pin_);
+                        demled_previous_state = digitalRead(this->dem_led_pin_);
+
+                        // DemLED'i kapat
+                        digitalWrite(this->dem_led_pin_, LOW);
 
                         // Tüm röleleri kapat
                         digitalWrite(this->relay_pin_, LOW);
@@ -88,19 +106,49 @@ namespace esphome
                 }
                 else
                 {
-                    if (kettle_durumu_ == KORUMA)
+                    if (this->kettle_durumu_ == KORUMA)
                     {
                         ESP_LOGI("CayseverRobotea", "Kettle yerine yerleştirildi. İşlemler devam ediyor.");
-                        kettle_durumu_ = NORMAL;
+
+                        // Önceki duruma dön
+                        if (this->previous_mode_ == KRITIK)
+                        {
+                            ESP_LOGI("CayseverRobotea", "Kritik moda geri dönülüyor.");
+                            this->kettle_durumu_ = KRITIK;
+                            this->previous_mode_ = NORMAL;
+                        }
+                        else
+                        {
+                            ESP_LOGI("CayseverRobotea", "Normal moda geri dönülüyor.");
+                            // BayLED ve DemLED'i eski durumlarına döndür
+                            digitalWrite(this->bay_led_pin_, bayled_previous_state);
+                            digitalWrite(this->dem_led_pin_, demled_previous_state);
+                            this->kettle_durumu_ = NORMAL;
+                            this->previous_mode_ = NORMAL;
+                        }
+                        this->publish_kettle_state_();
                     }
                 }
             }
             else
             {
-                if (kettle_durumu_ == NORMAL)
+                if (this->kettle_durumu_ != KORUMA)
                 {
                     ESP_LOGW("CayseverRobotea", "NTC sensörü bağlı değil!");
-                    kettle_durumu_ = KORUMA;
+                    this->previous_mode_ = this->kettle_durumu_;
+
+                    this->kettle_durumu_ = KORUMA;
+                    this->publish_kettle_state_();
+
+                    if (this->previous_mode_ == NORMAL)
+                    {
+                        // LED durumlarını kaydet
+                        bayled_previous_state = digitalRead(this->bay_led_pin_);
+                        demled_previous_state = digitalRead(this->dem_led_pin_);
+
+                        // DemLED'i kapat
+                        digitalWrite(this->dem_led_pin_, LOW);
+                    }
 
                     // Tüm röleleri kapat
                     digitalWrite(this->relay_pin_, LOW);
@@ -108,6 +156,12 @@ namespace esphome
                     this->relay_active_ = false;
                     this->dem_relay_active_ = false;
                 }
+            }
+
+            if (this->kettle_durumu_ == NORMAL || this->kettle_durumu_ == KRITIK)
+            {
+                this->check_water_level();
+                this->handle_touch_input();
             }
 
             // Sadece NORMAL durumda işlemlere devam et
@@ -133,12 +187,73 @@ namespace esphome
                 {
                     this->handle_cay_demleme();
                 }
-
-                // Dokunmatik girişlerini yönet
-                this->handle_touch_input();
             }
-            this->handle_touch_input_toggle_button_sound();
-            this->handle_touch_input_toggle_speak_sound();
+
+            if (this->kettle_durumu_ == KRITIK || this->previous_mode_ == KRITIK)
+            {
+                this->handle_critical_mode_leds(); // Kritik mod LED yanıp sönme
+            }
+            else if (this->kettle_durumu_ == KORUMA && this->current_mode_ != MODE_NONE && this->previous_mode_ == NORMAL)
+            {
+                this->handle_protection_mode_leds(); // Koruma mod LED yanıp sönme
+            }
+
+            if (this->kritik_sound_active_ && this->kettle_durumu_ == KRITIK)
+            {
+                if (this->current_time_ - this->kritik_sound_start_time_ >= 1000) // 2 saniyede bir
+                {
+
+                    this->activate_sound(std::map<int, bool>{
+                        {this->sound_pins_[0], true}, // GPIO4: HIGH
+                        {this->sound_pins_[2], true}, // GPIO32: HIGH
+                        {this->sound_pins_[1], false} // GPIO19: LOW
+                    });
+                    this->kritik_sound_start_time_ = this->current_time_;
+                }
+            }
+            else if (this->kettle_durumu_ != KRITIK && this->kritik_sound_active_)
+            {
+                // Kritik moddan çıkıldığında ses çalmayı durdur
+                this->kritik_sound_active_ = false;
+            }
+        }
+        void CayseverRobotea::handle_protection_mode_leds()
+        {
+            static unsigned long last_blink_time = 0;
+            static bool led_state = false;
+
+            // Yanıp sönme kontrolü
+            if (this->current_time_ - last_blink_time >= 300) // 300ms yanıp sönme aralığı
+            {
+                last_blink_time = this->current_time_;
+                led_state = !led_state;
+
+                // BayLED'i yanıp söndür
+                digitalWrite(this->bay_led_pin_, led_state ? HIGH : LOW);
+            }
+        }
+        void CayseverRobotea::handle_critical_mode_leds()
+        {
+            static unsigned long last_blink_time = 0;
+            static bool led_state = false;
+
+            if (this->current_time_ - last_blink_time >= 300) // 300ms yanıp sönme aralığı
+            {
+                last_blink_time = this->current_time_;
+                led_state = !led_state;
+
+                // BayLED ve Tuş 1'in Beyaz LED'ini yanıp söndür
+                if (led_state)
+                {
+                    digitalWrite(this->bay_led_pin_, HIGH); // BayLED yan
+                    this->control_led(0, true);             // Tuş 1 Beyaz LED yan
+                }
+                else
+                {
+                    digitalWrite(this->bay_led_pin_, LOW); // BayLED sön
+                    this->control_led(-1);                 // Tuş 1 Beyaz LED sön
+                }
+            }
         }
 
         void CayseverRobotea::led_blink(int pin, int times, int delay_ms)
@@ -179,9 +294,12 @@ namespace esphome
             this->handle_touch_input_boiling_water();
             this->handle_touch_input_brew_tea();
         }
+
         void CayseverRobotea::handle_touch_input_food_water()
         {
-            // Dokunmatik pinin durumu
+            static unsigned long touch_start_time = 0;  // Tuş basılma başlangıç zamanı
+            static unsigned long last_release_time = 0; // Son bırakma zamanı
+
             bool touch_value = digitalRead(this->touch_pins_[0]) == LOW;
             bool touch2 = digitalRead(this->touch_pins_[1]) == LOW;
 
@@ -189,16 +307,98 @@ namespace esphome
             {
                 if (touch2)
                 {
-                    return; // İki tuşa aynı anda basıldığında işlemi iptal et
+                    return;
                 }
-                this->play_button_sound();
-                this->update_mama_suyu(!this->touch_states_[0]);
+                touch_start_time = this->current_time_;
+            }
+            else if (!touch_value && this->previous_touch_states_[0])
+            {
+                if (touch2)
+                {
+                    return;
+                }
+                unsigned long press_duration = this->current_time_ - touch_start_time;
+                if (press_duration >= 1200) // Tuş 1 1,2 sn basılı tutarsa kritik moddan çık
+                {
+
+                    if (this->kettle_durumu_ == KRITIK)
+                    {
+
+                        this->activate_sound(std::map<int, bool>{
+                            {this->sound_pins_[0], true}, // GPIO4: HIGH
+                            {this->sound_pins_[2], true}, // GPIO32: HIGH
+                            {this->sound_pins_[1], false} // GPIO19: LOW
+                        });
+
+                        ESP_LOGI("CayseverRobotea", "Kritik moddan çıkılıyor. İşlemler devam ediyor.");
+                        this->manual_exit = true;
+                        this->kettle_durumu_ = NORMAL; // Durumu NORMAL'e döndür
+                        this->publish_kettle_state_();
+
+                        // LED'leri eski durumlarına döndür
+                        digitalWrite(this->bay_led_pin_, bayled_previous_state);
+                        digitalWrite(this->dem_led_pin_, demled_previous_state);
+                        switch (this->current_mode_)
+                        {
+                        case MODE_SU_KAYNATMA:
+                            if (this->su_kaynatma_durumu_ == SU_KAYNATMA_SICAKLIK_KORUMA)
+                            {
+                                this->control_led(2, true);
+                            }
+                            else if (this->su_kaynatma_durumu_ == SU_KAYNATMA_HAZIRLIK)
+                            {
+                                this->control_led(2, false);
+                            }
+
+                            break;
+
+                        case MODE_MAMA_SUYU:
+                            if (this->mama_suyu_durumu_ == MAMA_SUYU_SICAKLIK_KORUMA)
+                            {
+                                this->control_led(0, true);
+                            }
+                            else if (this->mama_suyu_durumu_ == MAMA_SUYU_HAZIRLIK)
+                            {
+                                this->control_led(0, false);
+                            }
+                            break;
+
+                        case MODE_CAY_DEMLEME:
+                            if (this->cay_demleme_durumu_ == DEMLEME_HAZIRLIK || this->cay_demleme_durumu_ == DEMLEME_BASLADI)
+                            {
+                                this->control_led(3, false);
+                            }
+                            else if (this->cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA)
+                            {
+                                this->control_led(3, true);
+                            }
+                            break;
+
+                        case MODE_NONE:
+                            this->control_led(-1);
+                            break;
+                        default:
+                            break;
+                        }
+                    }
+                }
+                else if (kettle_durumu_ == NORMAL)
+                {
+                    this->play_button_sound();
+                    this->update_mama_suyu(!this->touch_states_[0]);
+                    last_release_time = this->current_time_;
+                }
             }
             // Önceki durumu güncelle
             this->previous_touch_states_[0] = touch_value;
         }
+
         void CayseverRobotea::handle_touch_input_boiling_water()
         {
+            if (kettle_durumu_ == KRITIK)
+            {
+                return;
+            }
             // Dokunmatik pinin durumu
             bool touch_value = digitalRead(this->touch_pins_[2]) == LOW;
             bool touch2 = digitalRead(this->touch_pins_[3]) == LOW;
@@ -218,6 +418,10 @@ namespace esphome
         }
         void CayseverRobotea::handle_touch_input_brew_tea()
         {
+            if (kettle_durumu_ == KRITIK)
+            {
+                return;
+            }
             static unsigned long touch_start_time = 0;  // Tuş basılma başlangıç zamanı
             static unsigned long last_release_time = 0; // Son bırakma zamanı
             static int press_count = 0;                 // Bas çek sayacı
@@ -245,10 +449,10 @@ namespace esphome
                 // Çay Demleme bırakıldı (OFF)
                 unsigned long press_duration = this->current_time_ - touch_start_time;
 
-                if (press_duration >= 1500)
+                if (press_duration >= 1200)
                 {
-                    // 1,5 saniyeden fazla basılı tutuldu, işlem iptal ediliyor
-                    ESP_LOGW("CayseverRobotea", "Çay Demleme: İşlem iptal edildi (1,5 saniye basılı tutuldu).");
+                    // 1,2 saniyeden fazla basılı tutuldu, işlem iptal ediliyor
+                    ESP_LOGW("CayseverRobotea", "Çay Demleme: İşlem iptal edildi (1,2 saniye basılı tutuldu).");
                     this->set_mode(MODE_NONE, 0);
                     press_count = 0;
                 }
@@ -665,6 +869,13 @@ namespace esphome
             if (kettle_durumu_ == KORUMA)
             {
                 ESP_LOGW("CayseverRobotea", "Kettle koruma modunda. İşlem durduruldu.");
+                // LED durumlarını kaydet
+                bayled_previous_state = digitalRead(this->bay_led_pin_);
+                demled_previous_state = digitalRead(this->dem_led_pin_);
+
+                // DemLED'i kapat
+                digitalWrite(this->dem_led_pin_, LOW);
+
                 return;
             }
 
@@ -973,6 +1184,134 @@ namespace esphome
             }
         }
 
+        void CayseverRobotea::check_water_level()
+        {
+            if (this->su_kontrol_switch_->state)
+            {
+                if (kettle_durumu_ == KORUMA)
+                {
+                    return; // Koruma modunda su seviyesi kontrol edilmez
+                }
+
+                static unsigned long relay_off_time = 0;
+                static bool water_low = false;
+                static float last_temperature = -1.0; // Önceki sıcaklık
+
+                // Eğer manuel çıkış yapılmışsa gerekli sıfırlamaları yap
+                if (this->manual_exit)
+                {
+                    ESP_LOGI("CayseverRobotea", "Manuel kritik moddan çıkış algılandı. Relay zamanlayıcı ve su seviyesi sıfırlanıyor.");
+                    relay_off_time = 0;
+                    water_low = false;
+                    this->manual_exit = false; // Bayrağı sıfırla
+                }
+
+                float temperature = this->ntc_sensor_->state;
+
+                if (!this->relay_active_)
+                {
+                    if (relay_off_time == 0)
+                    {
+                        relay_off_time = this->current_time_;
+                    }
+
+                    unsigned long elapsed_time = (this->current_time_ - relay_off_time) / 1000;
+                    // ESP_LOGI("CayseverRobotea", "Relay kapalı geçen süre: %lu saniye", elapsed_time);
+
+                    if (elapsed_time >= 20 && temperature >= 103.5f)
+                    {
+                        ESP_LOGE("CayseverRobotea", "Su seviyesi azalmış olabilir! Sıcaklık: %.2f°C", temperature);
+                        water_low = true;
+                    }
+                }
+                else
+                {
+                    if (relay_off_time != 0) // relay_off_time sadece relay tekrar aktif olduğunda sıfırlanır.
+                    {
+                        relay_off_time = 0;
+                    }
+                    water_low = false;
+                }
+
+                // Kritik duruma geçiş
+                if (water_low && this->kettle_durumu_ == NORMAL)
+                {
+                    ESP_LOGE("CayseverRobotea", "Kritik: Su seviyesi çok azaldı! Koruma moduna geçiliyor.");
+                    this->kettle_durumu_ = KRITIK;
+                    this->publish_kettle_state_();
+
+                    // Kritik mod seslerini başlat
+                    this->kritik_sound_start_time_ = this->current_time_;
+                    this->kritik_sound_active_ = true;
+
+                    digitalWrite(this->relay_pin_, LOW);
+                    digitalWrite(this->demleme_relay_pin_, LOW);
+                    this->relay_active_ = false;
+                    this->dem_relay_active_ = false;
+                }
+
+                // Kritik moddan çıkış koşulları
+                if (this->kettle_durumu_ == KRITIK)
+                {
+                    if (last_temperature > 0 && (last_temperature - temperature) >= 5.0f)
+                    {
+                        ESP_LOGI("CayseverRobotea", "Kritik moddan çıkılıyor. Sıcaklık düşüşü algılandı (%.2f°C).", last_temperature - temperature);
+                        this->kettle_durumu_ = NORMAL;
+                        this->publish_kettle_state_();
+
+                        // LED'leri eski durumlarına döndür
+                        digitalWrite(this->bay_led_pin_, bayled_previous_state);
+                        digitalWrite(this->dem_led_pin_, demled_previous_state);
+
+                        switch (this->current_mode_)
+                        {
+                        case MODE_SU_KAYNATMA:
+                            if (this->su_kaynatma_durumu_ == SU_KAYNATMA_SICAKLIK_KORUMA)
+                            {
+                                this->control_led(2, true);
+                            }
+                            else if (this->su_kaynatma_durumu_ == SU_KAYNATMA_HAZIRLIK)
+                            {
+                                this->control_led(2, false);
+                            }
+                            break;
+
+                        case MODE_MAMA_SUYU:
+                            if (this->mama_suyu_durumu_ == MAMA_SUYU_SICAKLIK_KORUMA)
+                            {
+                                this->control_led(0, true);
+                            }
+                            else if (this->mama_suyu_durumu_ == MAMA_SUYU_HAZIRLIK)
+                            {
+                                this->control_led(0, false);
+                            }
+                            break;
+
+                        case MODE_CAY_DEMLEME:
+                            if (this->cay_demleme_durumu_ == DEMLEME_HAZIRLIK || this->cay_demleme_durumu_ == DEMLEME_BASLADI)
+                            {
+                                this->control_led(3, false);
+                            }
+                            else if (this->cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA)
+                            {
+                                this->control_led(3, true);
+                            }
+                            break;
+
+                        case MODE_NONE:
+                            this->control_led(-1);
+                            break;
+
+                        default:
+                            break;
+                        }
+                    }
+                }
+
+                last_temperature = temperature; // Son sıcaklık değerini güncelle
+            }
+        }
+
         void CayseverRobotea::handle_global_state_reset()
         {
             bool any_button_active = false;
@@ -1060,6 +1399,30 @@ namespace esphome
                 return "CAY_DEMLEME";
             }
             return "NONE";
+        }
+        void CayseverRobotea::publish_kettle_state_()
+        {
+            if (this->kettle_state_sensor_ != nullptr)
+            {
+                const char *state_str;
+                switch (this->kettle_durumu_)
+                {
+                case NORMAL:
+                    state_str = "NORMAL";
+                    break;
+                case KRITIK:
+                    state_str = "KRITIK";
+                    break;
+                case KORUMA:
+                    state_str = "KORUMA";
+                    break;
+                default:
+                    state_str = "NORMAL";
+                    break;
+                }
+                this->kettle_state_sensor_->publish_state(state_str);
+                ESP_LOGI("CayseverRobotea", "Kettle durumu güncellendi: %s", state_str);
+            }
         }
         void CayseverRobotea::publish_mode_()
         {
@@ -1247,6 +1610,18 @@ namespace esphome
                 ESP_LOGI("CayseverRobotea", "Konuşma sesi switch başarıyla ayarlandı.");
                 this->konusma_sesi_switch_->add_on_state_callback([this](bool state)
                                                                   { ESP_LOGI("CayseverRobotea", "Konuşma sesi switch durumu değişti: %s", state ? "ON" : "OFF"); });
+            }
+        }
+
+        void CayseverRobotea::set_su_kontrol_switch(switch_::Switch *su_kontrol_switch)
+        {
+            this->su_kontrol_switch_ = su_kontrol_switch;
+
+            if (this->su_kontrol_switch_ != nullptr)
+            {
+                ESP_LOGI("CayseverRobotea", "Su kontrol switch başarıyla ayarlandı.");
+                this->su_kontrol_switch_->add_on_state_callback([this](bool state)
+                                                                { ESP_LOGI("CayseverRobotea", "Su kontrol switch durumu değişti: %s", state ? "ON" : "OFF"); });
             }
         }
 
