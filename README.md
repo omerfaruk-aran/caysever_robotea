@@ -2,6 +2,7 @@
 
 *Akıllı kettle deneyiminizi bir üst seviyeye taşıyın!*
 
+![](https://visitor-badge.laobi.icu/badge?page_id=omerfaruk-aran.caysever_robotea)
 ---
 
 ## 📌 Proje Hakkında
