@@ -1546,22 +1546,22 @@ namespace esphome
             if (level == "1/4")
             {
                 level_state = true;
-                numeric_level = 1;
+                numeric_level = 4;
             }
             else if (level == "2/4")
             {
                 level_state = true;
-                numeric_level = 2;
+                numeric_level = 3;
             }
             else if (level == "3/4")
             {
                 level_state = true;
-                numeric_level = 3;
+                numeric_level = 2;
             }
             else if (level == "MAX")
             {
                 level_state = true;
-                numeric_level = 4;
+                numeric_level = 1;
             }
             else if (level == "OFF")
             {
