@@ -1606,19 +1606,15 @@ namespace esphome
         void CayseverRobotea::update_all_sensors()
         {
             static ActiveMode last_mode = MODE_NONE;
-            static KettleDurumu last_kettle_state = NORMAL;
 
             if (this->current_mode_ != last_mode)
             {
                 this->publish_mode_();
                 last_mode = this->current_mode_;
             }
-            if (this->kettle_durumu_ != last_kettle_state)
-            {
-                this->publish_kettle_state_();
-                last_kettle_state = this->kettle_durumu_;
-            }
-            this->publish_mode_state_(); // Alt durum değişiklikleri için her zaman güncelle.
+            
+            this->publish_kettle_state_();
+            this->publish_mode_state_(); 
         }
 
         void CayseverRobotea::set_mode(ActiveMode new_mode, int press_count)
