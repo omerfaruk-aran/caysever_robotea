@@ -63,6 +63,7 @@ namespace esphome
     public:
       void set_modlar(const Modlar &modlar) { this->modlar_ = modlar; }
       void set_mode_sensor(text_sensor::TextSensor *mode_sensor) { this->mode_sensor_ = mode_sensor; }
+      void set_mode_state_sensor(text_sensor::TextSensor *mode_state_sensor) { this->mode_state_sensor_ = mode_state_sensor; }
       void set_kettle_state_sensor(text_sensor::TextSensor *kettle_state_sensor) { this->kettle_state_sensor_ = kettle_state_sensor; }
       void set_mode(ActiveMode new_mode, int press_count);
 
@@ -90,11 +91,12 @@ namespace esphome
       switch_::Switch *su_kontrol_switch_ = nullptr;
 
       select::Select *cay_demleme_select_ = nullptr;
-      std::string cay_demleme_state_ = "OFF";
+      std::string cay_demleme_state_ = "KAPALI";
 
       Modlar modlar_; // Modlar struct'ı burada saklanacak
       ActiveMode current_mode_{MODE_NONE};
       text_sensor::TextSensor *mode_sensor_{nullptr};
+      text_sensor::TextSensor *mode_state_sensor_{nullptr};
       text_sensor::TextSensor *kettle_state_sensor_{nullptr};
       const char *active_mode_to_string(ActiveMode mode);
 
@@ -106,9 +108,13 @@ namespace esphome
 
       void publish_mode_();
       void publish_kettle_state_();
+      void publish_mode_state_();
+
       void update_su_kaynatma(bool su_kaynatma);
       void update_mama_suyu(bool mama_suyu);
       void update_cay_demleme(const std::string &level);
+      void update_all_sensors();
+      void handle_critical_sounds();
 
       void led_blink(int pin, int times, int delay_ms);
       void on_wifi_connected();    // Wi-Fi bağlantısı sağlandığında

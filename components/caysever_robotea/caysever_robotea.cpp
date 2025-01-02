@@ -31,7 +31,10 @@ namespace esphome
             }
             // Röle pini çıkış olarak ayarla
             pinMode(this->relay_pin_, OUTPUT);
-            digitalWrite(this->relay_pin_, LOW); // Röleyi başlangıçta kapalı yap
+            if (digitalRead(this->relay_pin_) != LOW)
+            {
+                digitalWrite(this->relay_pin_, LOW);
+            }
 
             // Demleme rölesi pinini çıkış olarak ayarla ve başlangıçta kapalı yap
             pinMode(this->demleme_relay_pin_, OUTPUT);
@@ -63,7 +66,7 @@ namespace esphome
             this->cay_demleme_durumu_ = DEMLEME_KAPALI;
 
             this->kettle_durumu_ = NORMAL;
-            this->publish_kettle_state_();
+            this->update_all_sensors();
         }
 
         // loop metodu tanımı
@@ -88,18 +91,27 @@ namespace esphome
                         this->previous_mode_ = kettle_durumu_;
 
                         this->kettle_durumu_ = KORUMA;
-                        this->publish_kettle_state_();
+                        this->update_all_sensors();
 
                         // LED durumlarını kaydet
                         bayled_previous_state = digitalRead(this->bay_led_pin_);
                         demled_previous_state = digitalRead(this->dem_led_pin_);
 
                         // DemLED'i kapat
-                        digitalWrite(this->dem_led_pin_, LOW);
+                        if (digitalRead(this->dem_led_pin_) != LOW)
+                        {
+                            digitalWrite(this->dem_led_pin_, LOW);
+                        }
 
                         // Tüm röleleri kapat
-                        digitalWrite(this->relay_pin_, LOW);
-                        digitalWrite(this->demleme_relay_pin_, LOW);
+                        if (digitalRead(this->relay_pin_) != LOW)
+                        {
+                            digitalWrite(this->relay_pin_, LOW);
+                        }
+                        if (digitalRead(this->demleme_relay_pin_) != LOW)
+                        {
+                            digitalWrite(this->demleme_relay_pin_, LOW);
+                        }
                         this->relay_active_ = false;
                         this->dem_relay_active_ = false;
                     }
@@ -126,7 +138,7 @@ namespace esphome
                             this->kettle_durumu_ = NORMAL;
                             this->previous_mode_ = NORMAL;
                         }
-                        this->publish_kettle_state_();
+                        this->update_all_sensors();
                     }
                 }
             }
@@ -138,7 +150,7 @@ namespace esphome
                     this->previous_mode_ = this->kettle_durumu_;
 
                     this->kettle_durumu_ = KORUMA;
-                    this->publish_kettle_state_();
+                    this->update_all_sensors();
 
                     if (this->previous_mode_ == NORMAL)
                     {
@@ -147,12 +159,21 @@ namespace esphome
                         demled_previous_state = digitalRead(this->dem_led_pin_);
 
                         // DemLED'i kapat
-                        digitalWrite(this->dem_led_pin_, LOW);
+                        if (digitalRead(this->dem_led_pin_) != LOW)
+                        {
+                            digitalWrite(this->dem_led_pin_, LOW);
+                        }
                     }
 
                     // Tüm röleleri kapat
-                    digitalWrite(this->relay_pin_, LOW);
-                    digitalWrite(this->demleme_relay_pin_, LOW);
+                    if (digitalRead(this->relay_pin_) != LOW)
+                    {
+                        digitalWrite(this->relay_pin_, LOW);
+                    }
+                    if (digitalRead(this->demleme_relay_pin_) != LOW)
+                    {
+                        digitalWrite(this->demleme_relay_pin_, LOW);
+                    }
                     this->relay_active_ = false;
                     this->dem_relay_active_ = false;
                 }
@@ -198,22 +219,23 @@ namespace esphome
                 this->handle_protection_mode_leds(); // Koruma mod LED yanıp sönme
             }
 
+            this->handle_critical_sounds();
+        }
+        void CayseverRobotea::handle_critical_sounds()
+        {
             if (this->kritik_sound_active_ && this->kettle_durumu_ == KRITIK)
             {
-                if (this->current_time_ - this->kritik_sound_start_time_ >= 1000) // 2 saniyede bir
+                if (this->current_time_ - this->kritik_sound_start_time_ >= 1000)
                 {
-
                     this->activate_sound(std::map<int, bool>{
-                        {this->sound_pins_[0], true}, // GPIO4: HIGH
-                        {this->sound_pins_[2], true}, // GPIO32: HIGH
-                        {this->sound_pins_[1], false} // GPIO19: LOW
-                    });
+                        {this->sound_pins_[0], true},
+                        {this->sound_pins_[2], true},
+                        {this->sound_pins_[1], false}});
                     this->kritik_sound_start_time_ = this->current_time_;
                 }
             }
             else if (this->kettle_durumu_ != KRITIK && this->kritik_sound_active_)
             {
-                // Kritik moddan çıkıldığında ses çalmayı durdur
                 this->kritik_sound_active_ = false;
             }
         }
@@ -245,13 +267,19 @@ namespace esphome
                 // BayLED ve Tuş 1'in Beyaz LED'ini yanıp söndür
                 if (led_state)
                 {
-                    digitalWrite(this->bay_led_pin_, HIGH); // BayLED yan
-                    this->control_led(0, true);             // Tuş 1 Beyaz LED yan
+                    if (digitalRead(this->bay_led_pin_) != HIGH)
+                    {
+                        digitalWrite(this->bay_led_pin_, HIGH);
+                    }
+                    this->control_led(0, true); // Tuş 1 Beyaz LED yan
                 }
                 else
                 {
-                    digitalWrite(this->bay_led_pin_, LOW); // BayLED sön
-                    this->control_led(-1);                 // Tuş 1 Beyaz LED sön
+                    if (digitalRead(this->bay_led_pin_) != LOW)
+                    {
+                        digitalWrite(this->bay_led_pin_, LOW);
+                    }
+                    this->control_led(-1); // Tuş 1 Beyaz LED sön
                 }
             }
         }
@@ -272,7 +300,10 @@ namespace esphome
             ESP_LOGI("CayseverRobotea", "Wi-Fi bağlantısı sağlandı.");
 
             // Bay LED'i kapat
-            digitalWrite(this->bay_led_pin_, LOW);
+            if (digitalRead(this->bay_led_pin_) != LOW)
+            {
+                digitalWrite(this->bay_led_pin_, LOW);
+            }
 
             // Dem LED'i 3 saniye boyunca yak
             digitalWrite(this->dem_led_pin_, HIGH);
@@ -285,7 +316,10 @@ namespace esphome
             ESP_LOGW("CayseverRobotea", "Wi-Fi bağlantısı başarısız.");
 
             // Bay LED'i açık bırak
-            digitalWrite(this->bay_led_pin_, HIGH);
+            if (digitalRead(this->bay_led_pin_) != HIGH)
+            {
+                digitalWrite(this->bay_led_pin_, HIGH);
+            }
         }
 
         void CayseverRobotea::handle_touch_input()
@@ -333,7 +367,7 @@ namespace esphome
                         ESP_LOGI("CayseverRobotea", "Kritik moddan çıkılıyor. İşlemler devam ediyor.");
                         this->manual_exit = true;
                         this->kettle_durumu_ = NORMAL; // Durumu NORMAL'e döndür
-                        this->publish_kettle_state_();
+                        this->update_all_sensors();
 
                         // LED'leri eski durumlarına döndür
                         digitalWrite(this->bay_led_pin_, bayled_previous_state);
@@ -446,7 +480,7 @@ namespace esphome
                 {
                     return; // İki tuşa aynı anda basıldığında işlemi iptal et
                 }
-                // Çay Demleme bırakıldı (OFF)
+                // Çay Demleme bırakıldı (KAPALI)
                 unsigned long press_duration = this->current_time_ - touch_start_time;
 
                 if (press_duration >= 1200)
@@ -462,7 +496,7 @@ namespace esphome
                     // Dokunma işlemi algılandı
                     press_count++;
                     last_release_time = this->current_time_;
-                    ESP_LOGI("CayseverRobotea", "Çay Demleme bırakıldı (OFF). Bas çek sayısı: %d", press_count);
+                    ESP_LOGI("CayseverRobotea", "Çay Demleme bırakıldı (KAPALI). Bas çek sayısı: %d", press_count);
                 }
             }
 
@@ -607,27 +641,40 @@ namespace esphome
                     ESP_LOGI("CayseverRobotea", "Tuş %d OFF yapıldı.", j + 1);
                 }
             }
-            this->cay_demleme_state_ = "OFF";
+            this->cay_demleme_state_ = "KAPALI";
 
             // Su kaynatma, mama suyu ve çay demleme işlemlerini sıfırla
             this->mama_suyu_durumu_ = MAMA_SUYU_KAPALI;
             this->cay_demleme_durumu_ = DEMLEME_KAPALI;
             this->su_kaynatma_durumu_ = SU_KAYNATMA_KAPALI;
+            this->update_all_sensors();
 
             // Tüm röleleri kapat
-            digitalWrite(this->relay_pin_, LOW);         // Su kaynatma rölesini kapat
-            digitalWrite(this->demleme_relay_pin_, LOW); // Demleme rölesini kapat
-            this->relay_active_ = false;                 // Röle durumu sıfırla
-            this->dem_relay_active_ = false;             // Demleme Röle durumu sıfırla
+            if (digitalRead(this->relay_pin_) != LOW)
+            {
+                digitalWrite(this->relay_pin_, LOW);
+            }
+            if (digitalRead(this->demleme_relay_pin_) != LOW)
+            {
+                digitalWrite(this->demleme_relay_pin_, LOW);
+            }
+            this->relay_active_ = false;     // Röle durumu sıfırla
+            this->dem_relay_active_ = false; // Demleme Röle durumu sıfırla
 
             // Tüm LED'leri kapat
             this->control_led(-1); // -1: tüm LED'leri kapat
             this->led_white_active_ = false;
 
             // DemLED ve BayLED sıfırlama
-            digitalWrite(this->dem_led_pin_, LOW); // DemLED'i kapat
-            digitalWrite(this->bay_led_pin_, LOW); // BayLED'i kapat
-            this->demled_active_ = false;          // DemLED durumunu sıfırla
+            if (digitalRead(this->dem_led_pin_) != LOW)
+            {
+                digitalWrite(this->dem_led_pin_, LOW);
+            }
+            if (digitalRead(this->bay_led_pin_) != LOW)
+            {
+                digitalWrite(this->bay_led_pin_, LOW);
+            }
+            this->demled_active_ = false; // DemLED durumunu sıfırla
 
             // Tüm tuş durumlarını sıfırla (global sıfırlamada)
             if (global_reset)
@@ -874,7 +921,10 @@ namespace esphome
                 demled_previous_state = digitalRead(this->dem_led_pin_);
 
                 // DemLED'i kapat
-                digitalWrite(this->dem_led_pin_, LOW);
+                if (digitalRead(this->dem_led_pin_) != LOW)
+                {
+                    digitalWrite(this->dem_led_pin_, LOW);
+                }
 
                 return;
             }
@@ -891,9 +941,14 @@ namespace esphome
                 if (temperature >= 40.0f)
                 {
                     // 40°C'ye ulaşıldığında döngüyü tamamla
-                    digitalWrite(this->relay_pin_, LOW); // Röleyi kapat
+                    if (digitalRead(this->relay_pin_) != LOW)
+                    {
+                        digitalWrite(this->relay_pin_, LOW);
+                    }
                     this->relay_active_ = false;
                     this->mama_suyu_durumu_ = MAMA_SUYU_SICAKLIK_KORUMA;
+                    this->update_all_sensors();
+
                     if (!this->led_white_active_)
                     {
                         this->control_led(0, true);         // Tuş 1’in beyaz LED’ini yak
@@ -914,7 +969,10 @@ namespace esphome
                     }
                     else if (this->relay_active_ && (this->current_time_ - this->last_relay_toggle_time_ >= this->relay_wait_time_))
                     {
-                        digitalWrite(this->relay_pin_, LOW); // Röleyi kapat
+                        if (digitalRead(this->relay_pin_) != LOW)
+                        {
+                            digitalWrite(this->relay_pin_, LOW);
+                        }
                         this->relay_active_ = false;
                         this->last_relay_toggle_time_ = this->current_time_;
                         ESP_LOGI("CayseverRobotea", "Sıcaklık: %.2f°C, Röle kapatıldı.", temperature);
@@ -951,7 +1009,10 @@ namespace esphome
                     // Sıcaklık 35°C'ye ulaştığında röleyi kapat
                     if (this->relay_active_)
                     {
-                        digitalWrite(this->relay_pin_, LOW); // Röleyi kapat
+                        if (digitalRead(this->relay_pin_) != LOW)
+                        {
+                            digitalWrite(this->relay_pin_, LOW);
+                        }
                         this->relay_active_ = false;
                         this->last_relay_toggle_time_ = this->current_time_;
                         ESP_LOGI("CayseverRobotea", "Sıcaklık: %.2f°C, Röle kapatıldı (koruma).", temperature);
@@ -982,9 +1043,14 @@ namespace esphome
             {
                 if (temperature >= 100.0f)
                 {
-                    digitalWrite(this->relay_pin_, LOW); // Röleyi kapat
+                    if (digitalRead(this->relay_pin_) != LOW)
+                    {
+                        digitalWrite(this->relay_pin_, LOW);
+                    }
                     this->relay_active_ = false;
                     this->su_kaynatma_durumu_ = SU_KAYNATMA_SICAKLIK_KORUMA;
+                    this->update_all_sensors();
+
                     // Beyaz LED'in zaten yakıldığını kontrol edin
                     if (!this->led_white_active_)
                     {
@@ -1006,7 +1072,10 @@ namespace esphome
                     }
                     else if (this->relay_active_ && (this->current_time_ - this->last_relay_toggle_time_ >= this->relay_wait_time_))
                     {
-                        digitalWrite(this->relay_pin_, LOW); // Röleyi kapat
+                        if (digitalRead(this->relay_pin_) != LOW)
+                        {
+                            digitalWrite(this->relay_pin_, LOW);
+                        }
                         this->relay_active_ = false;
                         this->last_relay_toggle_time_ = this->current_time_;
                         ESP_LOGI("CayseverRobotea", "Sıcaklık: %.2f°C, Röle kapatıldı. Su Kaynatma", temperature);
@@ -1055,9 +1124,14 @@ namespace esphome
                 if (temperature >= 100.0f)
                 {
                     // Sıcaklık 100°C'ye ulaştığında işlemi tamamla
-                    digitalWrite(this->relay_pin_, LOW); // Röleyi kapat
+                    if (digitalRead(this->relay_pin_) != LOW)
+                    {
+                        digitalWrite(this->relay_pin_, LOW);
+                    }
                     this->relay_active_ = false;
                     this->cay_demleme_durumu_ = DEMLEME_BASLADI;
+                    this->update_all_sensors();
+
                     this->demleme_start_time_ = this->current_time_; // Başlangıç zamanını kaydet
                     digitalWrite(this->demleme_relay_pin_, HIGH);    // Demleme rölesini aç
                     this->dem_relay_active_ = true;
@@ -1079,7 +1153,10 @@ namespace esphome
                     }
                     else if (this->relay_active_ && (this->current_time_ - this->last_relay_toggle_time_ >= this->relay_wait_time_))
                     {
-                        digitalWrite(this->relay_pin_, LOW); // Röleyi kapat
+                        if (digitalRead(this->relay_pin_) != LOW)
+                        {
+                            digitalWrite(this->relay_pin_, LOW);
+                        }
                         this->relay_active_ = false;
                         this->last_relay_toggle_time_ = this->current_time_;
                         ESP_LOGI("CayseverRobotea", "Sıcaklık: %.2f°C, Röle kapatıldı (kaynama devam ediyor).", temperature);
@@ -1108,23 +1185,31 @@ namespace esphome
                     if (this->dem_relay_active_)
                     {
                         // Demleme tamamlandığında röleyi kapat ve sıcaklık korumaya geç
-                        digitalWrite(this->demleme_relay_pin_, LOW); // Demleme rölesini kapat
+                        if (digitalRead(this->demleme_relay_pin_) != LOW)
+                        {
+                            digitalWrite(this->demleme_relay_pin_, LOW);
+                        }
                         this->dem_relay_active_ = false;
 
                         // 2 dakikalık dem alma süresini başlat
                         this->demleme_end_time_ = this->current_time_;
                     }
-                    else if (this->current_time_ - this->demleme_end_time_ >= 120000)
+                    else if (this->current_time_ - this->demleme_end_time_ >= 240000)
                     {
                         this->cay_demleme_durumu_ = DEMLEME_SICAKLIK_KORUMA;
+                        this->update_all_sensors();
 
                         ESP_LOGI("CayseverRobotea", "Çay demleme işlemi tamamlandı.");
 
                         // LED güncellemesi ve sesli uyarı
-                        this->control_led(3, true);             // Tuş 4 beyaz LED
-                        digitalWrite(this->dem_led_pin_, HIGH); // DemLED aktif
+                        this->control_led(3, true);
+                        if (digitalRead(this->dem_led_pin_) != HIGH)
+                        {
+                            digitalWrite(this->dem_led_pin_, HIGH);
+                        }
+
                         this->play_cay_demleme_done_sound();
-                        this->demled_start_time_ = this->current_time_; // DemLED başlangıç zamanını kaydet
+                        this->demled_start_time_ = this->current_time_;
                         this->demled_active_ = true;
                     }
                 }
@@ -1142,11 +1227,17 @@ namespace esphome
                     // 60 dakika = 3.600.000 ms
                     if (elapsed_time >= 3600000)
                     {
-                        // 1 dakika tamamlandı, DemLED kapat ve BayLED'i aç
-                        digitalWrite(this->dem_led_pin_, LOW); // DemLED pasif
+                        // tamamlandı, DemLED kapat ve BayLED'i aç
+                        if (digitalRead(this->dem_led_pin_) != LOW)
+                        {
+                            digitalWrite(this->dem_led_pin_, LOW);
+                        }
                         delay(10);
-                        digitalWrite(this->bay_led_pin_, HIGH); // BayLED aktif
-                        this->demled_active_ = false;           // DemLED durumu sona erdi
+                        if (digitalRead(this->bay_led_pin_) != HIGH)
+                        {
+                            digitalWrite(this->bay_led_pin_, HIGH);
+                        }
+                        this->demled_active_ = false; // DemLED durumu sona erdi
                         ESP_LOGI("CayseverRobotea", "DemLED kapandı, BayLED aktif.");
                     }
                 }
@@ -1176,7 +1267,10 @@ namespace esphome
             {
                 if (this->relay_active_)
                 {
-                    digitalWrite(this->relay_pin_, LOW);
+                    if (digitalRead(this->relay_pin_) != LOW)
+                    {
+                        digitalWrite(this->relay_pin_, LOW);
+                    }
                     this->relay_active_ = false;
                     this->last_relay_toggle_time_ = this->current_time_;
                     ESP_LOGI("CayseverRobotea", "Sıcaklık koruma: %.2f°C, Röle kapatıldı.", temperature);
@@ -1238,14 +1332,20 @@ namespace esphome
                 {
                     ESP_LOGE("CayseverRobotea", "Kritik: Su seviyesi çok azaldı! Koruma moduna geçiliyor.");
                     this->kettle_durumu_ = KRITIK;
-                    this->publish_kettle_state_();
+                    this->update_all_sensors();
 
                     // Kritik mod seslerini başlat
                     this->kritik_sound_start_time_ = this->current_time_;
                     this->kritik_sound_active_ = true;
 
-                    digitalWrite(this->relay_pin_, LOW);
-                    digitalWrite(this->demleme_relay_pin_, LOW);
+                    if (digitalRead(this->relay_pin_) != LOW)
+                    {
+                        digitalWrite(this->relay_pin_, LOW);
+                    }
+                    if (digitalRead(this->demleme_relay_pin_) != LOW)
+                    {
+                        digitalWrite(this->demleme_relay_pin_, LOW);
+                    }
                     this->relay_active_ = false;
                     this->dem_relay_active_ = false;
                 }
@@ -1257,7 +1357,7 @@ namespace esphome
                     {
                         ESP_LOGI("CayseverRobotea", "Kritik moddan çıkılıyor. Sıcaklık düşüşü algılandı (%.2f°C).", last_temperature - temperature);
                         this->kettle_durumu_ = NORMAL;
-                        this->publish_kettle_state_();
+                        this->update_all_sensors();
 
                         // LED'leri eski durumlarına döndür
                         digitalWrite(this->bay_led_pin_, bayled_previous_state);
@@ -1421,7 +1521,78 @@ namespace esphome
                     break;
                 }
                 this->kettle_state_sensor_->publish_state(state_str);
-                ESP_LOGI("CayseverRobotea", "Kettle durumu güncellendi: %s", state_str);
+            }
+        }
+        void CayseverRobotea::publish_mode_state_()
+        {
+            if (this->mode_state_sensor_ != nullptr)
+            {
+                const char *state_str;
+
+                switch (this->current_mode_)
+                {
+                case MODE_NONE:
+                {
+                    state_str = "NONE";
+                    break;
+                }
+                case MODE_SU_KAYNATMA:
+                {
+                    switch (this->su_kaynatma_durumu_)
+                    {
+                    case SU_KAYNATMA_HAZIRLIK:
+                        state_str = "HAZIRLIK";
+                        break;
+                    case SU_KAYNATMA_SICAKLIK_KORUMA:
+                        state_str = "SICAKLIK_KORUMA";
+                        break;
+                    case SU_KAYNATMA_KAPALI:
+                        state_str = "KAPALI";
+                        break;
+                    }
+                    break;
+                }
+                case MODE_MAMA_SUYU:
+                {
+                    switch (this->mama_suyu_durumu_)
+                    {
+                    case MAMA_SUYU_HAZIRLIK:
+                        state_str = "HAZIRLIK";
+                        break;
+                    case MAMA_SUYU_SICAKLIK_KORUMA:
+                        state_str = "SICAKLIK_KORUMA";
+                        break;
+                    case MAMA_SUYU_KAPALI:
+                        state_str = "KAPALI";
+                        break;
+                    }
+                    break;
+                }
+                case MODE_CAY_DEMLEME:
+                {
+                    switch (this->cay_demleme_durumu_)
+                    {
+                    case DEMLEME_BASLADI:
+                        state_str = "DEMLEME_BASLADI";
+                        break;
+                    case DEMLEME_HAZIRLIK:
+                        state_str = "HAZIRLIK";
+                        break;
+                    case DEMLEME_SICAKLIK_KORUMA:
+                        state_str = "SICAKLIK_KORUMA";
+                        break;
+                    case DEMLEME_KAPALI:
+                        state_str = "KAPALI";
+                        break;
+                    }
+                    break;
+                }
+
+                default:
+                    state_str = "NONE";
+                    break;
+                }
+                this->mode_state_sensor_->publish_state(state_str);
             }
         }
         void CayseverRobotea::publish_mode_()
@@ -1431,6 +1602,25 @@ namespace esphome
                 this->mode_sensor_->publish_state(this->active_mode_to_string(this->current_mode_));
             }
         }
+
+        void CayseverRobotea::update_all_sensors()
+        {
+            static ActiveMode last_mode = MODE_NONE;
+            static KettleDurumu last_kettle_state = NORMAL;
+
+            if (this->current_mode_ != last_mode)
+            {
+                this->publish_mode_();
+                last_mode = this->current_mode_;
+            }
+            if (this->kettle_durumu_ != last_kettle_state)
+            {
+                this->publish_kettle_state_();
+                last_kettle_state = this->kettle_durumu_;
+            }
+            this->publish_mode_state_(); // Alt durum değişiklikleri için her zaman güncelle.
+        }
+
         void CayseverRobotea::set_mode(ActiveMode new_mode, int press_count)
         {
             ESP_LOGI("CayseverRobotea", "set_mode: Yeni mod => %d", new_mode);
@@ -1454,9 +1644,9 @@ namespace esphome
                 this->reset_all_operations(false);
                 if (this->current_mode_ != new_mode)
                 {
-                    if (this->cay_demleme_select_->state != "OFF")
+                    if (this->cay_demleme_select_->state != "KAPALI")
                     {
-                        this->cay_demleme_select_->publish_state("OFF");
+                        this->cay_demleme_select_->publish_state("KAPALI");
                     }
                 }
                 break;
@@ -1485,6 +1675,7 @@ namespace esphome
                 this->su_kaynatma_durumu_ = SU_KAYNATMA_HAZIRLIK;
                 if (this->su_kaynatma_switch_)
                     this->su_kaynatma_switch_->publish_state(true);
+
                 break;
 
             case MODE_MAMA_SUYU:
@@ -1493,6 +1684,7 @@ namespace esphome
                 this->mama_suyu_durumu_ = MAMA_SUYU_HAZIRLIK;
                 if (this->mama_suyu_switch_)
                     this->mama_suyu_switch_->publish_state(true);
+
                 break;
 
             case MODE_CAY_DEMLEME:
@@ -1521,16 +1713,17 @@ namespace esphome
                     this->cay_demleme_state_ = new_state;
                     this->cay_demleme_select_->publish_state(new_state);
                 }
+
                 break;
             }
 
             // 4) Mod sensoru yayınla
-            this->publish_mode_();
+            this->update_all_sensors();
         }
         void CayseverRobotea::set_cay_demleme_select(select::Select *cay_demleme_select)
         {
             this->cay_demleme_select_ = cay_demleme_select;
-            this->cay_demleme_select_->publish_state("OFF");
+            this->cay_demleme_select_->publish_state("KAPALI");
             this->cay_demleme_select_->add_on_state_callback([this](const std::string &value, size_t index)
                                                              {
             ESP_LOGI("CayseverRobotea", "on_cay_demleme_change %s", value.c_str());
@@ -1563,7 +1756,7 @@ namespace esphome
                 level_state = true;
                 numeric_level = 1;
             }
-            else if (level == "OFF")
+            else if (level == "KAPALI")
             {
                 level_state = false;
                 numeric_level = 0;

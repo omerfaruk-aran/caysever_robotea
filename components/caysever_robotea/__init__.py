@@ -18,6 +18,7 @@ CayseverRoboteaSelect = caysever_ns.class_(
 
 CONF_KETTLE_STATE_SENSOR = "kettle_state_sensor"
 CONF_ACTIVE_MODE_SENSOR = "active_mode_sensor"
+CONF_MODE_STATE_SENSOR = "mode_state_sensor"
 CONF_CAY_DEMLEME = "cay_demleme"
 CONF_SU_KAYNATMA = "su_kaynatma_switch"
 # CONF_FILTRE_KAHVE = "filtre_kahve" //TODO
@@ -31,7 +32,7 @@ CAY_DEMLEME_LEVEL_OPTIONS = [
     "2/4",
     "3/4",
     "MAX",
-    "OFF",
+    "KAPALI",
 ]
 
 SWITCH_SCHEMA = switch.SWITCH_SCHEMA.extend(cv.COMPONENT_SCHEMA).extend(
@@ -56,6 +57,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_MAMA_SUYU): SWITCH_SCHEMA,
         cv.Optional(CONF_CAY_DEMLEME): SELECT_SCHEMA,
         cv.Optional(CONF_ACTIVE_MODE_SENSOR): TEXT_SENSOR_SCHEMA,
+        cv.Optional(CONF_MODE_STATE_SENSOR): TEXT_SENSOR_SCHEMA,
         cv.Optional(CONF_KETTLE_STATE_SENSOR): TEXT_SENSOR_SCHEMA,
         cv.Optional(CONF_BUTON_SESI_SWITCH): cv.use_id(switch.Switch),
         cv.Optional(CONF_KONUSMA_SESI_SWITCH): cv.use_id(switch.Switch),
@@ -104,6 +106,12 @@ async def to_code(config):
         mode_sens = cg.new_Pvariable(sens_conf[CONF_ID])
         await text_sensor.register_text_sensor(mode_sens, sens_conf)
         cg.add(var.set_mode_sensor(mode_sens))
+
+    if CONF_MODE_STATE_SENSOR in config:
+        sens_state_conf = config[CONF_MODE_STATE_SENSOR]
+        mode_state_sens = cg.new_Pvariable(sens_state_conf[CONF_ID])
+        await text_sensor.register_text_sensor(mode_state_sens, sens_state_conf)
+        cg.add(var.set_mode_state_sensor(mode_state_sens))
 
     if CONF_KETTLE_STATE_SENSOR in config:
         kettle_state_sens_conf = config[CONF_KETTLE_STATE_SENSOR]

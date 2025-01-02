@@ -49,6 +49,8 @@ caysever_robotea:
   sensor: ntc_temperature
   kettle_state_sensor:
     name: "Kettle Durumu"
+  mode_state_sensor:
+    name: "Kettle Alt Durumu"
   active_mode_sensor:
     name: "Aktif Mod"
   mama_suyu_switch:
