@@ -50,7 +50,7 @@ caysever_robotea:
   kettle_state_sensor:
     name: "Kettle Durumu"
   mode_state_sensor:
-    name: "Kettle Alt Durumu"
+    name: "Mod Durumu"
   active_mode_sensor:
     name: "Aktif Mod"
   mama_suyu_switch:
