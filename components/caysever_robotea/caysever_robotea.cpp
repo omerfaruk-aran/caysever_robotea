@@ -1533,7 +1533,7 @@ namespace esphome
                 {
                 case MODE_NONE:
                 {
-                    state_str = "NONE";
+                    state_str = "KAPALI";
                     break;
                 }
                 case MODE_SU_KAYNATMA:
@@ -1589,7 +1589,7 @@ namespace esphome
                 }
 
                 default:
-                    state_str = "NONE";
+                    state_str = "KAPALI";
                     break;
                 }
                 this->mode_state_sensor_->publish_state(state_str);
@@ -1612,7 +1612,7 @@ namespace esphome
                 this->publish_mode_();
                 last_mode = this->current_mode_;
             }
-            
+
             this->publish_kettle_state_();
             this->publish_mode_state_(); 
         }
