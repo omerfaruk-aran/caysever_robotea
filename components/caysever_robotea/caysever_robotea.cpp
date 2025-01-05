@@ -468,7 +468,7 @@ namespace esphome
             {
                 if (touch2)
                 {
-                    return; // İki tuşa aynı anda basıldığında işlemi iptal et
+                    return;
                 }
                 // Çay Demleme'e basıldı (ON)
                 touch_start_time = this->current_time_;
@@ -478,21 +478,21 @@ namespace esphome
             {
                 if (touch2)
                 {
-                    return; // İki tuşa aynı anda basıldığında işlemi iptal et
+                    return;
                 }
                 // Çay Demleme bırakıldı (KAPALI)
                 unsigned long press_duration = this->current_time_ - touch_start_time;
+                
+                this->play_button_sound();
 
-                if (press_duration >= 1200)
+                if (this->current_mode_ == MODE_CAY_DEMLEME)
                 {
-                    // 1,2 saniyeden fazla basılı tutuldu, işlem iptal ediliyor
-                    ESP_LOGW("CayseverRobotea", "Çay Demleme: İşlem iptal edildi (1,2 saniye basılı tutuldu).");
+                    ESP_LOGW("CayseverRobotea", "Çay Demleme: İşlem iptal ediliyor.");
                     this->set_mode(MODE_NONE, 0);
                     press_count = 0;
                 }
                 else
                 {
-                    this->play_button_sound();
                     // Dokunma işlemi algılandı
                     press_count++;
                     last_release_time = this->current_time_;
@@ -1614,7 +1614,7 @@ namespace esphome
             }
 
             this->publish_kettle_state_();
-            this->publish_mode_state_(); 
+            this->publish_mode_state_();
         }
 
         void CayseverRobotea::set_mode(ActiveMode new_mode, int press_count)
