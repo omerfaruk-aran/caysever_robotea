@@ -52,7 +52,7 @@ namespace esphome
 
     enum ActiveMode
     {
-      MODE_NONE,
+      MODE_KAPALI,
       MODE_SU_KAYNATMA,
       MODE_MAMA_SUYU,
       MODE_CAY_DEMLEME
@@ -94,7 +94,7 @@ namespace esphome
       std::string cay_demleme_state_ = "KAPALI";
 
       Modlar modlar_; // Modlar struct'ı burada saklanacak
-      ActiveMode current_mode_{MODE_NONE};
+      ActiveMode current_mode_{MODE_KAPALI};
       text_sensor::TextSensor *mode_sensor_{nullptr};
       text_sensor::TextSensor *mode_state_sensor_{nullptr};
       text_sensor::TextSensor *kettle_state_sensor_{nullptr};

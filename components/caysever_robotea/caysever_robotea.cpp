@@ -46,7 +46,7 @@ namespace esphome
                 pinMode(this->sound_pins_[i], OUTPUT);
                 digitalWrite(this->sound_pins_[i], LOW);
             }
-            this->current_mode_ = MODE_NONE;
+            this->current_mode_ = MODE_KAPALI;
             this->publish_mode_();
             // Wi-Fi olaylarını dinle
             WiFi.onEvent([this](arduino_event_id_t event, arduino_event_info_t info)
@@ -214,7 +214,7 @@ namespace esphome
             {
                 this->handle_critical_mode_leds(); // Kritik mod LED yanıp sönme
             }
-            else if (this->kettle_durumu_ == KORUMA && this->current_mode_ != MODE_NONE && this->previous_mode_ == NORMAL)
+            else if (this->kettle_durumu_ == KORUMA && this->current_mode_ != MODE_KAPALI && this->previous_mode_ == NORMAL)
             {
                 this->handle_protection_mode_leds(); // Koruma mod LED yanıp sönme
             }
@@ -245,7 +245,7 @@ namespace esphome
             static bool led_state = false;
 
             // Yanıp sönme kontrolü
-            if (this->current_time_ - last_blink_time >= 300) // 300ms yanıp sönme aralığı
+            if (this->current_time_ - last_blink_time >= 1000) // 300ms yanıp sönme aralığı
             {
                 last_blink_time = this->current_time_;
                 led_state = !led_state;
@@ -408,7 +408,7 @@ namespace esphome
                             }
                             break;
 
-                        case MODE_NONE:
+                        case MODE_KAPALI:
                             this->control_led(-1);
                             break;
                         default:
@@ -488,7 +488,7 @@ namespace esphome
                 if (this->current_mode_ == MODE_CAY_DEMLEME)
                 {
                     ESP_LOGW("CayseverRobotea", "Çay Demleme: İşlem iptal ediliyor.");
-                    this->set_mode(MODE_NONE, 0);
+                    this->set_mode(MODE_KAPALI, 0);
                     press_count = 0;
                 }
                 else
@@ -1095,7 +1095,7 @@ namespace esphome
             }
             case SU_KAYNATMA_SICAKLIK_KORUMA:
             {
-                this->maintain_temperature(90.0f, 95.0f);
+                this->maintain_temperature(95.0f, 99.0f);
                 break;
             }
             default:
@@ -1176,8 +1176,7 @@ namespace esphome
                 break;
 
             case DEMLEME_BASLADI:
-                // Koruma Modu (90°C - 95°C)
-                this->maintain_temperature(90.0f, 95.0f);
+                this->maintain_temperature(95.0f, 99.0f);
 
                 // Demleme süresini kontrol et
                 if (this->current_time_ - this->demleme_start_time_ >= this->demleme_suresi_ * 1000)
@@ -1217,8 +1216,7 @@ namespace esphome
                 break;
 
             case DEMLEME_SICAKLIK_KORUMA:
-                // Koruma Modu (90°C - 95°C)
-                this->maintain_temperature(90.0f, 95.0f);
+                this->maintain_temperature(95.0f, 99.0f);
 
                 // DemLED süresini kontrol et
                 if (this->demled_active_)
@@ -1398,7 +1396,7 @@ namespace esphome
                             }
                             break;
 
-                        case MODE_NONE:
+                        case MODE_KAPALI:
                             this->control_led(-1);
                             break;
 
@@ -1470,7 +1468,7 @@ namespace esphome
             }
             else
             {
-                this->set_mode(MODE_NONE, 0);
+                this->set_mode(MODE_KAPALI, 0);
             }
         }
 
@@ -1482,15 +1480,15 @@ namespace esphome
             }
             else
             {
-                this->set_mode(MODE_NONE, 0);
+                this->set_mode(MODE_KAPALI, 0);
             }
         }
         const char *CayseverRobotea::active_mode_to_string(ActiveMode mode)
         {
             switch (mode)
             {
-            case MODE_NONE:
-                return "NONE";
+            case MODE_KAPALI:
+                return "KAPALI";
             case MODE_SU_KAYNATMA:
                 return "SU_KAYNATMA";
             case MODE_MAMA_SUYU:
@@ -1498,7 +1496,7 @@ namespace esphome
             case MODE_CAY_DEMLEME:
                 return "CAY_DEMLEME";
             }
-            return "NONE";
+            return "KAPALI";
         }
         void CayseverRobotea::publish_kettle_state_()
         {
@@ -1531,7 +1529,7 @@ namespace esphome
 
                 switch (this->current_mode_)
                 {
-                case MODE_NONE:
+                case MODE_KAPALI:
                 {
                     state_str = "KAPALI";
                     break;
@@ -1605,7 +1603,7 @@ namespace esphome
 
         void CayseverRobotea::update_all_sensors()
         {
-            static ActiveMode last_mode = MODE_NONE;
+            static ActiveMode last_mode = MODE_KAPALI;
 
             if (this->current_mode_ != last_mode)
             {
@@ -1647,7 +1645,7 @@ namespace esphome
                 }
                 break;
 
-            case MODE_NONE:
+            case MODE_KAPALI:
                 this->reset_all_operations(false);
                 break;
             default:
@@ -1661,7 +1659,7 @@ namespace esphome
             // 3) Yeni mod ON işlemleri
             switch (new_mode)
             {
-            case MODE_NONE:
+            case MODE_KAPALI:
                 this->reset_all_operations(false);
                 break;
 
@@ -1770,7 +1768,7 @@ namespace esphome
             }
             else
             {
-                this->set_mode(MODE_NONE, 0);
+                this->set_mode(MODE_KAPALI, 0);
             }
         }
 
