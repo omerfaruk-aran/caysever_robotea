@@ -1,7 +1,7 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import sensor, switch, text_sensor, select
-from esphome.const import CONF_ID, CONF_SENSOR
+from esphome.const import CONF_ID, CONF_SENSOR, CONF_ICON
 
 CODEOWNERS = ["@omerfaruk-aran"]
 AUTO_LOAD = ["sensor", "switch", "select", "text_sensor"]
@@ -35,30 +35,55 @@ CAY_DEMLEME_LEVEL_OPTIONS = [
     "KAPALI",
 ]
 
-SWITCH_SCHEMA = switch.SWITCH_SCHEMA.extend(cv.COMPONENT_SCHEMA).extend(
-    {cv.GenerateID(): cv.declare_id(CayseverRoboteaSwitch)}
+SWITCH_SCHEMA = switch.switch_schema(CayseverRoboteaSwitch).extend(cv.COMPONENT_SCHEMA)
+
+SELECT_SCHEMA = select.select_schema(CayseverRoboteaSelect)
+
+TEXT_SENSOR_SCHEMA = text_sensor.text_sensor_schema()
+
+SU_KAYNATMA_SCHEMA = (
+    switch.switch_schema(CayseverRoboteaSwitch)
+    .extend(cv.COMPONENT_SCHEMA)
+    .extend({cv.Optional(CONF_ICON, default="mdi:kettle"): cv.icon})
 )
 
-SELECT_SCHEMA = select.SELECT_SCHEMA.extend(
-    {cv.GenerateID(CONF_ID): cv.declare_id(CayseverRoboteaSelect)}
+MAMA_SUYU_SCHEMA = (
+    switch.switch_schema(CayseverRoboteaSwitch)
+    .extend(cv.COMPONENT_SCHEMA)
+    .extend({cv.Optional(CONF_ICON, default="mdi:baby-bottle-outline"): cv.icon})
 )
 
-TEXT_SENSOR_SCHEMA = text_sensor.TEXT_SENSOR_SCHEMA.extend(
-    {
-        cv.GenerateID(): cv.declare_id(text_sensor.TextSensor),
-    }
+CAY_DEMLEME_SCHEMA = (
+    select.select_schema(CayseverRoboteaSelect)
+    .extend({cv.Optional(CONF_ICON, default="mdi:tea"): cv.icon})
 )
+
+AKTIF_MOD_SCHEMA = (
+    text_sensor.text_sensor_schema()
+    .extend({cv.Optional(CONF_ICON, default="mdi:toggle-switch-outline"): cv.icon})
+)
+
+MOD_DURUM_SCHEMA = (
+    text_sensor.text_sensor_schema()
+    .extend({cv.Optional(CONF_ICON, default="mdi:information-outline"): cv.icon})
+)
+
+KETTLE_DURUM_SCHEMA = (
+    text_sensor.text_sensor_schema()
+    .extend({cv.Optional(CONF_ICON, default="mdi:kettle"): cv.icon})
+)
+
 
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(CayseverRobotea),
         cv.Required(CONF_SENSOR): cv.use_id(sensor.Sensor),
-        cv.Optional(CONF_SU_KAYNATMA): SWITCH_SCHEMA,
-        cv.Optional(CONF_MAMA_SUYU): SWITCH_SCHEMA,
-        cv.Optional(CONF_CAY_DEMLEME): SELECT_SCHEMA,
-        cv.Optional(CONF_ACTIVE_MODE_SENSOR): TEXT_SENSOR_SCHEMA,
-        cv.Optional(CONF_MODE_STATE_SENSOR): TEXT_SENSOR_SCHEMA,
-        cv.Optional(CONF_KETTLE_STATE_SENSOR): TEXT_SENSOR_SCHEMA,
+        cv.Optional(CONF_SU_KAYNATMA): SU_KAYNATMA_SCHEMA,
+        cv.Optional(CONF_MAMA_SUYU): MAMA_SUYU_SCHEMA,
+        cv.Optional(CONF_CAY_DEMLEME): CAY_DEMLEME_SCHEMA,
+        cv.Optional(CONF_ACTIVE_MODE_SENSOR): AKTIF_MOD_SCHEMA,
+        cv.Optional(CONF_MODE_STATE_SENSOR): MOD_DURUM_SCHEMA,
+        cv.Optional(CONF_KETTLE_STATE_SENSOR): KETTLE_DURUM_SCHEMA,
         cv.Optional(CONF_BUTON_SESI_SWITCH): cv.use_id(switch.Switch),
         cv.Optional(CONF_KONUSMA_SESI_SWITCH): cv.use_id(switch.Switch),
         cv.Optional(CONF_SU_KONTROL_SWITCH): cv.use_id(switch.Switch),

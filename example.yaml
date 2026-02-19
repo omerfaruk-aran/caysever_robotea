@@ -68,18 +68,24 @@ switch:
   - platform: template
     name: "Buton Sesi"
     id: buton_sesi
+    icon: mdi:gesture-tap-button
+    entity_category: config
     restore_mode: RESTORE_DEFAULT_ON
     optimistic: true
 
   - platform: template
     name: "Konuşma Sesi"
     id: konusma_sesi
+    icon: mdi:account-voice
+    entity_category: config
     restore_mode: RESTORE_DEFAULT_ON
     optimistic: true
 
   - platform: template
     name: "Su Kontrolü"
     id: su_kontrol
+    icon: mdi:water-check
+    entity_category: config
     restore_mode: RESTORE_DEFAULT_ON
     optimistic: true
 
