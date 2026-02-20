@@ -482,7 +482,7 @@ namespace esphome
                 }
                 // Çay Demleme bırakıldı (KAPALI)
                 unsigned long press_duration = this->current_time_ - touch_start_time;
-                
+
                 this->play_button_sound();
 
                 if (this->current_mode_ == MODE_CAY_DEMLEME)
@@ -613,16 +613,16 @@ namespace esphome
             switch (level)
             {
             case 1:
-                this->demleme_suresi_ = 420; // 7 dakika (Maximum çizgisinin üzerinde doldurulabilir.)
+                this->demleme_suresi_ = 430; // 7 dakika 10 saniye (Maximum çizgisinin üzerinde doldurulabilir.)
                 break;
             case 2:
-                this->demleme_suresi_ = 300; // 5 dakika
+                this->demleme_suresi_ = 330; // 5 dakika 30 saniye
                 break;
             case 3:
-                this->demleme_suresi_ = 210; // 3 dakika 30 saniye
+                this->demleme_suresi_ = 240; // 4 dakika
                 break;
             case 4:
-                this->demleme_suresi_ = 120; // 2 dakika
+                this->demleme_suresi_ = 150; // 2 dakika 30 saniye
                 break;
             default:
                 this->demleme_suresi_ = 0;
@@ -1638,7 +1638,7 @@ namespace esphome
                 this->reset_all_operations(false);
                 if (this->current_mode_ != new_mode)
                 {
-                    if (this->cay_demleme_select_->state != "KAPALI")
+                    if (this->cay_demleme_select_->current_option() != "KAPALI")
                     {
                         this->cay_demleme_select_->publish_state("KAPALI");
                     }
@@ -1718,10 +1718,11 @@ namespace esphome
         {
             this->cay_demleme_select_ = cay_demleme_select;
             this->cay_demleme_select_->publish_state("KAPALI");
-            this->cay_demleme_select_->add_on_state_callback([this](const std::string &value, size_t index)
-                                                             {
-            ESP_LOGI("CayseverRobotea", "on_cay_demleme_change %s", value.c_str());
-            this->on_cay_demleme_change(value); });
+            this->cay_demleme_select_->add_on_state_callback([this](size_t index) {
+            auto opt = this->cay_demleme_select_->current_option();
+
+            ESP_LOGI("CayseverRobotea", "on_cay_demleme_change %s", opt.c_str());
+            this->on_cay_demleme_change(opt.str()); });
         }
 
         void CayseverRobotea::update_cay_demleme(const std::string &level)
