@@ -1410,8 +1410,6 @@ namespace esphome
             if (!this->ntc_sensor_)
                 return;
 
-                ESP_LOGI("CayseverRobotea", "Su seviyesi kontrolü başlatıldı.");
-
             const float t = this->ntc_sensor_->state;
 
             // Sıcaklık 103.5°C'nin üzerinde olduğunda kritik durumu başlatma
