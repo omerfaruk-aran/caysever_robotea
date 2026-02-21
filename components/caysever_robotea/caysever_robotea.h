@@ -2,6 +2,8 @@
 #include "esphome.h"
 #include <string>
 #include <functional>
+#include <map>
+#include <cstdint>
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/select/select.h"
 #include "esphome/components/switch/switch.h"
@@ -71,6 +73,7 @@ namespace esphome
       void set_su_kaynatma_switch(switch_::Switch *su_kaynatma_switch);
       void set_mama_suyu_switch(switch_::Switch *mama_suyu_switch);
       void set_cay_demleme_select(select::Select *cay_demleme_select);
+      void set_cay_demleme_max_switch(switch_::Switch *cay_demleme_max_switch);
       void set_buton_sesi_switch(switch_::Switch *buton_sesi_switch);
       void set_konusma_sesi_switch(switch_::Switch *konusma_sesi_switch);
       void set_su_kontrol_switch(switch_::Switch *su_kontrol_switch);
@@ -93,6 +96,9 @@ namespace esphome
       select::Select *cay_demleme_select_ = nullptr;
       std::string cay_demleme_state_ = "KAPALI";
 
+      switch_::Switch *cay_demleme_max_switch_ = nullptr;
+      bool suppress_cay_demleme_max_cb_{false};
+
       Modlar modlar_; // Modlar struct'ı burada saklanacak
       ActiveMode current_mode_{MODE_KAPALI};
       text_sensor::TextSensor *mode_sensor_{nullptr};
@@ -105,6 +111,15 @@ namespace esphome
       CayDemlemeDurumu cay_demleme_durumu_;
       KettleDurumu kettle_durumu_ = NORMAL;
       KettleDurumu previous_mode_ = NORMAL;
+
+      bool pending_mode_change_{false};
+      ActiveMode pending_mode_{MODE_KAPALI};
+      int pending_press_count_{0};
+      bool pending_process_scheduled_{false};
+
+      void apply_mode_(ActiveMode new_mode, int press_count);
+      void schedule_process_pending_();
+      void process_pending_();
 
       void publish_mode_();
       void publish_kettle_state_();
@@ -143,6 +158,20 @@ namespace esphome
       void handle_su_kaynatma();       // Su kaynatma işlemini yönetecek fonksiyon
       void handle_cay_demleme();       // Çay demleme işlemi (su kaynatma + demleme)
       void maintain_temperature(float min, float max);
+
+      // ---(kaynama sonrası cam demliği ısıtma) ---
+      uint32_t su_kaynatma_boil_ms_{0};                     // kaynama görüldüğü an
+      static constexpr uint32_t STEAM_BOOST_MS = 20 * 1000; // 20sn (0-60 arası güvenli)
+      static constexpr float STEAM_BOOST_MAX_T = 103.0f;    // taban sıcaklığı tavanı (çok önemli)
+      static constexpr float OVERHEAT_CUTOFF_T = 120.0f;    // fail-safe (bu mutlaka olmalı)
+      bool steam_boost_enabled_{false};                     // bu kaynatmada boost var mı?
+      static constexpr float STEAM_BOOST_START_T = 80.0f;   // başlarken NTC < 80 ise boost aktif
+
+      // Su seviyesi kontrolü için değişkenler
+      uint32_t wl_grace_until_{0};  // Kettle yerine konduktan sonra geçici süre
+      uint32_t wl_win_start_ms_{0}; // Isı ölçümü için başlangıç zamanı
+      float wl_win_start_t_{0};     // Başlangıç sıcaklığı
+      uint8_t wl_susp_{0};          // Şüphe sayacı (0..3)
 
       // Röle ve sensör pinleri
       int relay_pin_ = 17;         // Su kaynatma rölesi GPIO17
@@ -183,6 +212,22 @@ namespace esphome
       // Durum ve tuş verileri
       bool touch_states_[4] = {false, false, false, false};          // Tuşların durumları
       bool previous_touch_states_[4] = {false, false, false, false}; // Önceki durum
+
+      struct DemlemeFeedbackState
+      {
+        bool active{false};
+        int level{0};          // 1..4 (1=MAX)
+        int blink_done{0};     // kaç blink tamam
+        bool phase_on{false};  // white ON/OFF fazı
+        uint32_t next_ms{0};   // bir sonraki adım zamanı
+        bool post_wait{false}; // blink bittikten sonra 500ms bekleme
+      } demleme_fb_;
+
+      void start_demleme_feedback_(int level);
+      void process_demleme_feedback_();
+      void set_demleme_suresi_for_level_(int level);
+
+      uint32_t sound_pulse_token_{0};
 
       void on_su_kaynatma_change(bool state)
       {
@@ -229,6 +274,28 @@ namespace esphome
         ESP_LOGI("CayseverRobotea", "Çay demleme seviyesi güncellendi: %s", level.c_str());
         this->play_button_sound();
         this->update_cay_demleme(level);
+      }
+
+      void on_cay_demleme_max_change(bool state)
+      {
+        if (this->suppress_cay_demleme_max_cb_)
+          return;
+
+        ESP_LOGI("CayseverRobotea", "Çay Demleme (MAX) switch: %s", state ? "ON" : "OFF");
+
+        this->play_button_sound();
+
+        if (state)
+        {
+          // ON -> her zaman MAX ile başlat
+          this->set_mode(MODE_CAY_DEMLEME, 1); // 1 => MAX
+        }
+        else
+        {
+          // OFF -> sadece demleme modundaysa kapat
+          if (this->current_mode_ == MODE_CAY_DEMLEME)
+            this->set_mode(MODE_KAPALI, 0);
+        }
       }
     };
 

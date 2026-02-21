@@ -20,6 +20,7 @@ CONF_KETTLE_STATE_SENSOR = "kettle_state_sensor"
 CONF_ACTIVE_MODE_SENSOR = "active_mode_sensor"
 CONF_MODE_STATE_SENSOR = "mode_state_sensor"
 CONF_CAY_DEMLEME = "cay_demleme"
+CONF_CAY_DEMLEME_MAX_SWITCH = "cay_demleme_max_switch"
 CONF_SU_KAYNATMA = "su_kaynatma_switch"
 # CONF_FILTRE_KAHVE = "filtre_kahve" //TODO
 CONF_MAMA_SUYU = "mama_suyu_switch"
@@ -53,24 +54,26 @@ MAMA_SUYU_SCHEMA = (
     .extend({cv.Optional(CONF_ICON, default="mdi:baby-bottle-outline"): cv.icon})
 )
 
-CAY_DEMLEME_SCHEMA = (
-    select.select_schema(CayseverRoboteaSelect)
+CAY_DEMLEME_SCHEMA = select.select_schema(CayseverRoboteaSelect).extend(
+    {cv.Optional(CONF_ICON, default="mdi:tea"): cv.icon}
+)
+
+CAY_DEMLEME_MAX_SWITCH_SCHEMA = (
+    switch.switch_schema(CayseverRoboteaSwitch)
+    .extend(cv.COMPONENT_SCHEMA)
     .extend({cv.Optional(CONF_ICON, default="mdi:tea"): cv.icon})
 )
 
-AKTIF_MOD_SCHEMA = (
-    text_sensor.text_sensor_schema()
-    .extend({cv.Optional(CONF_ICON, default="mdi:toggle-switch-outline"): cv.icon})
+AKTIF_MOD_SCHEMA = text_sensor.text_sensor_schema().extend(
+    {cv.Optional(CONF_ICON, default="mdi:toggle-switch-outline"): cv.icon}
 )
 
-MOD_DURUM_SCHEMA = (
-    text_sensor.text_sensor_schema()
-    .extend({cv.Optional(CONF_ICON, default="mdi:information-outline"): cv.icon})
+MOD_DURUM_SCHEMA = text_sensor.text_sensor_schema().extend(
+    {cv.Optional(CONF_ICON, default="mdi:information-outline"): cv.icon}
 )
 
-KETTLE_DURUM_SCHEMA = (
-    text_sensor.text_sensor_schema()
-    .extend({cv.Optional(CONF_ICON, default="mdi:kettle"): cv.icon})
+KETTLE_DURUM_SCHEMA = text_sensor.text_sensor_schema().extend(
+    {cv.Optional(CONF_ICON, default="mdi:kettle"): cv.icon}
 )
 
 
@@ -81,6 +84,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_SU_KAYNATMA): SU_KAYNATMA_SCHEMA,
         cv.Optional(CONF_MAMA_SUYU): MAMA_SUYU_SCHEMA,
         cv.Optional(CONF_CAY_DEMLEME): CAY_DEMLEME_SCHEMA,
+        cv.Optional(CONF_CAY_DEMLEME_MAX_SWITCH): CAY_DEMLEME_MAX_SWITCH_SCHEMA,
         cv.Optional(CONF_ACTIVE_MODE_SENSOR): AKTIF_MOD_SCHEMA,
         cv.Optional(CONF_MODE_STATE_SENSOR): MOD_DURUM_SCHEMA,
         cv.Optional(CONF_KETTLE_STATE_SENSOR): KETTLE_DURUM_SCHEMA,
@@ -106,11 +110,11 @@ async def to_code(config):
     if CONF_BUTON_SESI_SWITCH in config:
         buton_sesi = await cg.get_variable(config[CONF_BUTON_SESI_SWITCH])
         cg.add(var.set_buton_sesi_switch(buton_sesi))
-    
+
     if CONF_KONUSMA_SESI_SWITCH in config:
         konusma_sesi = await cg.get_variable(config[CONF_KONUSMA_SESI_SWITCH])
         cg.add(var.set_konusma_sesi_switch(konusma_sesi))
-        
+
     if CONF_SU_KONTROL_SWITCH in config:
         su_kontrol = await cg.get_variable(config[CONF_SU_KONTROL_SWITCH])
         cg.add(var.set_su_kontrol_switch(su_kontrol))
@@ -118,6 +122,7 @@ async def to_code(config):
     for s in [
         CONF_SU_KAYNATMA,
         CONF_MAMA_SUYU,
+        CONF_CAY_DEMLEME_MAX_SWITCH,
     ]:
         if s in config:
             conf = config[s]
@@ -141,7 +146,9 @@ async def to_code(config):
     if CONF_KETTLE_STATE_SENSOR in config:
         kettle_state_sens_conf = config[CONF_KETTLE_STATE_SENSOR]
         kettle_state_sens = cg.new_Pvariable(kettle_state_sens_conf[CONF_ID])
-        await text_sensor.register_text_sensor(kettle_state_sens, kettle_state_sens_conf)
+        await text_sensor.register_text_sensor(
+            kettle_state_sens, kettle_state_sens_conf
+        )
         cg.add(var.set_kettle_state_sensor(kettle_state_sens))
 
     await cg.register_component(var, config)
