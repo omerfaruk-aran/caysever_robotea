@@ -222,7 +222,7 @@ namespace esphome
                     this->handle_cay_demleme();
                 }
             }
-            
+
             if (this->kettle_durumu_ == NORMAL)
             {
                 this->check_water_level();
@@ -1410,20 +1410,30 @@ namespace esphome
             if (!this->ntc_sensor_)
                 return;
 
+                ESP_LOGI("CayseverRobotea", "Su seviyesi kontrolü başlatıldı.");
+
             const float t = this->ntc_sensor_->state;
 
-            // Sert güvenlik (istersen 112..115 gibi daha aşağı da çekebiliriz)
-            if (t >= 112.0f)
+            // Sıcaklık 103.5°C'nin üzerinde olduğunda kritik durumu başlatma
+            if (t >= OVERHEAT_CUTOFF_T)
             {
                 ESP_LOGE("CayseverRobotea", "WL HARD: T=%.2fC -> KRITIK", t);
-                goto WL_CRITICAL;
+                this->kettle_durumu_ = KRITIK;
+                this->update_all_sensors();
+                return;
             }
 
-            // Hız ölçümü sadece röle ON iken ve 45..90 bandında anlamlı
-            if (!this->relay_active_ || t < 45.0f || t > 90.0f)
+            // Hızlı ısıtma kontrolü (su seviyesi kaybolduğunda düşük sıcaklık kontrolü)
+            if (this->relay_active_ && (t < 90.0f)) // 90°C altına düştüyse
+            {
+                this->wl_grace_until_ = this->current_time_ + 15000; // Kettle yerine konduktan sonra geçici süre
+                ESP_LOGW("CayseverRobotea", "Su seviyesi düşük, kettle yerine konduktan sonra geçici süre başlatıldı.");
+            }
+            // Su seviyesi kontrolü (slope ölçümü)
+            else if (this->relay_active_ && t < 45.0f)
             {
                 this->wl_win_start_ms_ = 0;
-                this->wl_win_start_t_ = 0;
+                this->wl_win_start_t_ = t;
                 return;
             }
 
@@ -1469,22 +1479,9 @@ namespace esphome
             if (this->wl_susp_ >= TRIP)
             {
                 ESP_LOGE("CayseverRobotea", "WL: su az olabilir (rate) -> KRITIK (T=%.2f)", t);
-                goto WL_CRITICAL;
+                this->kettle_durumu_ = KRITIK;
+                this->update_all_sensors();
             }
-
-            return;
-
-        WL_CRITICAL:
-            this->kettle_durumu_ = KRITIK;
-            this->update_all_sensors();
-
-            this->kritik_sound_start_time_ = this->current_time_;
-            this->kritik_sound_active_ = true;
-
-            digitalWrite(this->relay_pin_, LOW);
-            digitalWrite(this->demleme_relay_pin_, LOW);
-            this->relay_active_ = false;
-            this->dem_relay_active_ = false;
         }
 
         void CayseverRobotea::handle_global_state_reset()
