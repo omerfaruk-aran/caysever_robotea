@@ -1394,90 +1394,118 @@ namespace esphome
                 this->last_relay_toggle_time_ = this->current_time_;
             }
         }
-
+        
         void CayseverRobotea::check_water_level()
         {
             if (!this->su_kontrol_switch_ || !this->su_kontrol_switch_->state)
                 return;
-
-            if (this->kettle_durumu_ != NORMAL)
+            if (this->kettle_durumu_ == KORUMA)
                 return;
 
-            // Kettle yeni konduysa bir süre ölçme
-            if (this->current_time_ < this->wl_grace_until_)
-                return;
+            float temperature = this->ntc_sensor_->state;
+            static float last_temperature_for_exit = -1.0;
+            static uint32_t last_boil_finished_time = 0; // Kaynama bitiş zamanı
 
-            if (!this->ntc_sensor_)
-                return;
-
-            const float t = this->ntc_sensor_->state;
-
-            // Sıcaklık 103.5°C'nin üzerinde olduğunda kritik durumu başlatma
-            if (t >= OVERHEAT_CUTOFF_T)
-            {
-                ESP_LOGE("CayseverRobotea", "WL HARD: T=%.2fC -> KRITIK", t);
-                this->kettle_durumu_ = KRITIK;
-                this->update_all_sensors();
-                return;
-            }
-
-            // Hızlı ısıtma kontrolü (su seviyesi kaybolduğunda düşük sıcaklık kontrolü)
-            if (this->relay_active_ && (t < 90.0f)) // 90°C altına düştüyse
-            {
-                this->wl_grace_until_ = this->current_time_ + 15000; // Kettle yerine konduktan sonra geçici süre
-                ESP_LOGW("CayseverRobotea", "Su seviyesi düşük, kettle yerine konduktan sonra geçici süre başlatıldı.");
-            }
-            // Su seviyesi kontrolü (slope ölçümü)
-            else if (this->relay_active_ && t < 45.0f)
+            // --- 1. KRİTİK MODDAN ÇIKIŞ VE MANUEL RESET ---
+            if (this->manual_exit)
             {
                 this->wl_win_start_ms_ = 0;
-                this->wl_win_start_t_ = t;
-                return;
+                this->manual_exit = false;
             }
 
-            constexpr uint32_t WIN_MS = 25000; // 25sn pencere
-            constexpr float SLOPE_WARN = 0.40f;
-            constexpr float SLOPE_HARD = 0.46f;
-            constexpr uint8_t TRIP = 3;
-
-            if (this->wl_win_start_ms_ == 0)
+            if (this->kettle_durumu_ == KRITIK)
             {
-                this->wl_win_start_ms_ = this->current_time_;
-                this->wl_win_start_t_ = t;
+                if (last_temperature_for_exit > 0 && (last_temperature_for_exit - temperature) >= 5.0f)
+                {
+                    ESP_LOGI("CayseverRobotea", "Sıcaklık düşüşü algılandı, KRITIK moddan çıkılıyor.");
+                    this->kettle_durumu_ = NORMAL;
+                    this->update_all_sensors();
+                }
+                last_temperature_for_exit = temperature;
                 return;
             }
+            last_temperature_for_exit = temperature;
 
-            uint32_t dt = this->current_time_ - this->wl_win_start_ms_;
-            if (dt < WIN_MS)
-                return;
-
-            float slope = (t - this->wl_win_start_t_) / (dt / 1000.0f); // °C/s
-
-            uint8_t add = 0;
-            if (slope >= SLOPE_HARD)
-                add = 2;
-            else if (slope >= SLOPE_WARN)
-                add = 1;
-
-            if (add > 0)
+            // --- 2. KAYNAMA SONRASI SOĞUMA SÜRESİ ---
+            // Eğer su yeni kaynadıysa, 30 saniye boyunca "susuz" kontrolü yapma.
+            // Çünkü rezistansın ısısı sensörü 104-105 derecelere fırlatabiliyor (Overshoot).
+            if (this->su_kaynatma_durumu_ == SU_KAYNATMA_SICAKLIK_KORUMA ||
+                this->mama_suyu_durumu_ == MAMA_SUYU_SICAKLIK_KORUMA)
             {
-                this->wl_susp_ = (uint8_t)std::min<int>(TRIP, this->wl_susp_ + add);
-                ESP_LOGW("CayseverRobotea", "WL rate: slope=%.2fC/s susp=%d", slope, this->wl_susp_);
+                if (last_boil_finished_time == 0)
+                    last_boil_finished_time = this->current_time_;
+
+                // Kaynamadan sonraki ilk 30 saniye hassas ölçüm yapma
+                if (this->current_time_ - last_boil_finished_time < 30000)
+                    return;
             }
             else
             {
-                if (this->wl_susp_ > 0)
-                    this->wl_susp_--;
+                last_boil_finished_time = 0;
             }
 
-            // pencereyi kaydır
-            this->wl_win_start_ms_ = this->current_time_;
-            this->wl_win_start_t_ = t;
+            // --- 3. SU YOK ANALİZİ ---
+            bool water_low_detected = false;
 
-            if (this->wl_susp_ >= TRIP)
+            // A) Statik Limit: 106 derece kesinlikle susuzluktur.
+            // (103.5 su varken overshoot ile görülebildiği için yükselttik)
+            if (temperature >= 106.0f)
             {
-                ESP_LOGE("CayseverRobotea", "WL: su az olabilir (rate) -> KRITIK (T=%.2f)", t);
+                ESP_LOGE("CayseverRobotea", "KRİTİK SICAKLIK: %.2f°C - Rezistans aşırı ısındı!", temperature);
+                water_low_detected = true;
+            }
+
+            // B) Eğim (Slope) Kontrolü
+            if (this->relay_active_ && !water_low_detected && this->mama_suyu_durumu_ == MAMA_SUYU_KAPALI)
+            {
+                if (this->wl_win_start_ms_ == 0)
+                {
+                    this->wl_win_start_ms_ = this->current_time_;
+                    this->wl_win_start_t_ = temperature;
+                }
+                else
+                {
+                    uint32_t dt = this->current_time_ - this->wl_win_start_ms_;
+
+                    if (dt >= 7000)
+                    { // 7 saniyelik analiz
+                        float diff = temperature - this->wl_win_start_t_;
+                        float slope = diff / (dt / 1000.0f);
+
+                        // Eşik Değeri: 1.65 C/sn
+                        // Senin logunda 0.5L su 1.41 hızındaydı (kurtuldu).
+                        // 0.1L su ise 2.26 hızındaydı (yakalanacak).
+                        if (slope > 1.65f && temperature < 98.0f)
+                        {
+                            ESP_LOGE("CayseverRobotea", "HIZLI ISINMA: %.3f C/sn - Su yetersiz!", slope);
+                            water_low_detected = true;
+                        }
+
+                        this->wl_win_start_ms_ = this->current_time_;
+                        this->wl_win_start_t_ = temperature;
+                    }
+                }
+            }
+            else
+            {
+                this->wl_win_start_ms_ = 0;
+            }
+
+            // --- 4. HATA TETİKLEME ---
+            if (water_low_detected)
+            {
                 this->kettle_durumu_ = KRITIK;
+                this->kritik_sound_active_ = true;
+                this->kritik_sound_start_time_ = this->current_time_;
+                this->play_button_sound();
+
+                // Switchleri ve donanımı kapat
+                if (this->su_kaynatma_switch_)
+                    this->su_kaynatma_switch_->publish_state(false);
+                if (this->mama_suyu_switch_)
+                    this->mama_suyu_switch_->publish_state(false);
+
+                this->reset_all_operations(true);
                 this->update_all_sensors();
             }
         }
