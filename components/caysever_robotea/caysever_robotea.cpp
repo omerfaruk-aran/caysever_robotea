@@ -2,6 +2,7 @@
 #include "esphome/core/log.h"
 #include <WiFi.h>
 #include <algorithm>
+#include <cmath>
 
 namespace esphome
 {
@@ -90,7 +91,9 @@ namespace esphome
             {
                 float temperature = this->ntc_sensor_->state;
 
-                if (temperature < 0.0f) // Anormal sıcaklık değeri
+                // NaN: ölçüm yok (açılışta ilk okuma öncesi / sensör hatası). Tüm karşılaştırmalar false
+                // döndüğü için aşağıdaki mod işleyicileri röleyi açabilir; koruma moduna al.
+                if (std::isnan(temperature) || temperature < 0.0f) // Anormal sıcaklık değeri
                 {
                     if (this->kettle_durumu_ != KORUMA)
                     {
