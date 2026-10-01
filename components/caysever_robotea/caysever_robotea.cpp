@@ -1754,7 +1754,7 @@ namespace esphome
                 this->reset_all_operations(false);
                 if (this->current_mode_ != new_mode)
                 {
-                    if (this->cay_demleme_select_->current_option() != "KAPALI")
+                    if (this->cay_demleme_select_ != nullptr && this->cay_demleme_select_->current_option() != "KAPALI")
                         this->cay_demleme_select_->publish_state("KAPALI");
 
                     publish_demleme_switch(false);
