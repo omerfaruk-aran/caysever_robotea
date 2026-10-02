@@ -24,6 +24,18 @@ Proje kapsamında cihaz üzerinde yapılan değişiklikler, cihazın garanti kap
 - 4 farklı demleme seviyesi: **1/4, 2/4, 3/4, MAX**.
 - Her seviyeye göre belirlenen süre sonunda rezistans kapanır, enerji tasarrufu sağlanır.
 
+### 💧 **Su Bitti Algısı (isteğe bağlı)**
+- Fabrika yazılımındaki gibi: demleme rölesi 10 sn'de bir kısa süre bırakılır ve **GPIO34** girişinde şebeke işareti
+  kalıp kalmadığına bakılır. İşaret kesildiyse üst haznedeki su bitmiştir; röle bırakılır, su bittikten 15 dk sonra
+  "çay demlendi" denir. Pompalama hiçbir durumda seçilen seviyenin süresini aşmaz.
+- Üst hazne boşsa (~47 sn'de anlaşılır) demlenme beklenmeden sıcak tutmaya ve tazelik sayacına geçilir.
+- Yaml'da `su_bitti_algisi_switch` ile açılır; anahtar kapatılırsa ya da girişte hiç işaret görülmezse demleme eski,
+  süreli düzenle yürür. `demleme_hatti_sensor` tanılama sensörü girişteki kenar sayısını gösterir.
+- Ayrıntı: [docs/fabrika-yazilimi.md](docs/fabrika-yazilimi.md).
+
+### ⏱️ **Kendiliğinden Kapanma (isteğe bağlı)**
+- `otomatik_kapanma: 2h` — mod açıldıktan bu süre sonra cihaz kendini kapatır (fabrika yazılımında 2 saat).
+
 ### 🔄 **Kettle Koruma Modu**
 - Kettle kaldırıldığında geçici koruma modu.
 - Yerine koyulduğunda işlemler kaldığı yerden devam eder.
