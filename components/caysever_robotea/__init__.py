@@ -97,6 +97,8 @@ CONFIG_SCHEMA = cv.Schema(
 
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
+    # WiFi.onEvent için Arduino WiFi kütüphanesi (yeni ESPHome'da varsayılan kapalı)
+    cg.add_library("WiFi", None)
     ntc_sensor = await cg.get_variable(config[CONF_SENSOR])
 
     cg.add(var.set_ntc_sensor(ntc_sensor))
