@@ -152,6 +152,7 @@ namespace esphome
       void record_ntc_sample_(float value); // NTC'nin her yeni okumasını zamanıyla sakla
       void enter_critical_();               // KRITIK'e geçiş: röleler, işlemler ve mod kapanır, alarm başlar
       void restore_mode_leds_();            // Aktif moda ve aşamasına göre tuş LED'ini geri yak
+      void brew_resume_after_koruma_();     // Kettle demlerken kaldırılıp konunca su aktarımını sürdür
       void handle_critical_mode_leds();
       void handle_exit_critical_mode();
       void control_led(int button_index, bool is_white = false);  // LED kontrol fonksiyonu
@@ -252,6 +253,9 @@ namespace esphome
         uint32_t next_ms{0};   // bir sonraki adım zamanı
         bool post_wait{false}; // blink bittikten sonra 500ms bekleme
       } demleme_fb_;
+
+      uint32_t demleme_fb_end_ms_{0};                      // seviye geri bildiriminin (son bip'in) bittiği an
+      static constexpr uint32_t DEMLEME_FB_GAP_MS = 600;   // bip ile demleme başlangıç konuşması arasında bırakılan süre
 
       void start_demleme_feedback_(int level);
       void process_demleme_feedback_();

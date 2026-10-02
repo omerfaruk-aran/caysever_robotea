@@ -168,6 +168,7 @@ namespace esphome
                             this->restore_mode_leds_();
                             this->kettle_durumu_ = NORMAL;
                             this->previous_mode_ = NORMAL;
+                            this->brew_resume_after_koruma_();
                         }
                         this->update_all_sensors();
                     }
@@ -681,6 +682,7 @@ namespace esphome
                 this->play_button_sound();
                 this->control_led(3); // kırmızı garanti
                 this->demleme_fb_.active = false;
+                this->demleme_fb_end_ms_ = this->current_time_;
                 ESP_LOGI("CayseverRobotea", "Demleme görsel geri bildirim tamamlandı: %d/4", this->demleme_fb_.level);
                 return;
             }
@@ -1251,6 +1253,14 @@ namespace esphome
                         digitalWrite(this->relay_pin_, LOW);
                     }
                     this->relay_active_ = false;
+
+                    // Seviye geri bildirimi (beyaz yanıp sönme, ardından bip) bitmeden demlemeyi başlatma. Su zaten
+                    // kaynamışsa demleme aynı anda başlıyor, 1-3 sn sonra gelen bip "çayı demlemeye başlıyorum"
+                    // konuşmasını yarıda kesiyor ve lambayı yeniden kırmızıya çeviriyordu. Bip'in ardından ses çipine
+                    // kısa bir nefes payı da bırakılır.
+                    if (this->demleme_fb_.active || (this->current_time_ - this->demleme_fb_end_ms_) < DEMLEME_FB_GAP_MS)
+                        break;
+
                     this->cay_demleme_durumu_ = DEMLEME_BASLADI;
                     this->update_all_sensors();
 
@@ -1369,6 +1379,22 @@ namespace esphome
 
             default:
                 break;
+            }
+        }
+
+        // Kettle demleme sırasında kaldırılıp geri kondu. KORUMA'ya girerken demleme rölesi bırakılmıştı; süre
+        // dolmadıysa yeniden çekilir. Yoksa kettle bir kez kaldırılınca su aktarımı o demlemede bir daha başlamıyor,
+        // süre dolunca yine de "çay demlendi" deniyordu.
+        void CayseverRobotea::brew_resume_after_koruma_()
+        {
+            if (this->cay_demleme_durumu_ != DEMLEME_BASLADI)
+                return;
+
+            if (this->current_time_ - this->demleme_start_time_ < this->demleme_suresi_ * 1000)
+            {
+                ESP_LOGI("CayseverRobotea", "Demleme: kettle geri kondu, su aktarımı sürüyor.");
+                digitalWrite(this->demleme_relay_pin_, HIGH);
+                this->dem_relay_active_ = true;
             }
         }
 
