@@ -148,7 +148,10 @@ namespace esphome
       void handle_touch_input_toggle_button_sound();
       void handle_touch_input_toggle_speak_sound();
       void check_water_level();
-      void handle_protection_mode_leds();
+      bool slope_is_sustained_();           // Su seviye eğimi: artış okumadan okumaya sürüyor mu (tek okuma sıçraması değil mi)
+      void record_ntc_sample_(float value); // NTC'nin her yeni okumasını zamanıyla sakla
+      void enter_critical_();               // KRITIK'e geçiş: röleler, işlemler ve mod kapanır, alarm başlar
+      void restore_mode_leds_();            // Aktif moda ve aşamasına göre tuş LED'ini geri yak
       void handle_critical_mode_leds();
       void handle_exit_critical_mode();
       void control_led(int button_index, bool is_white = false);  // LED kontrol fonksiyonu
@@ -179,6 +182,25 @@ namespace esphome
       uint32_t wl_win_start_ms_{0}; // Isı ölçümü için başlangıç zamanı
       float wl_win_start_t_{0};     // Başlangıç sıcaklığı
       uint8_t wl_susp_{0};          // Şüphe sayacı (0..3)
+
+      // Eğim kontrolünün doğrulaması: uç-nokta eğimi eşiği aşsa bile artışın sürekli olması aranır
+      static constexpr uint8_t WL_MIN_INTERVALS = 3;         // bundan az okuma aralığı varsa doğrulama yapılamaz (eski davranış)
+      static constexpr float WL_SUSTAIN_MIN_MEDIAN = 1.0f;   // aralık eğimlerinin ortancası en az bu olmalı (°C/sn)
+      static constexpr float WL_GLITCH_DROP = -1.0f;         // ısıtıcı açıkken bundan hızlı düşüş (°C/sn) bozuk okumadır
+      struct NtcSample
+      {
+        uint32_t ms;
+        float t;
+      };
+      static constexpr uint8_t NTC_SAMPLE_COUNT = 16;
+      NtcSample ntc_samples_[NTC_SAMPLE_COUNT]{}; // halka tampon: son okumalar
+      uint8_t ntc_sample_head_{0};                // bir sonraki okumanın yazılacağı yer
+      uint8_t ntc_sample_len_{0};
+
+      // Kettle'ın tabandan ayrı kaldığı süre. KRITIK'teyken en az KRITIK_ONAY_MS kaldırılıp geri konursa alarm
+      // onaylanmış sayılır; daha kısası (tek okumalık sensör kaybı) KRITIK'i bozmaz.
+      uint32_t koruma_start_ms_{0};
+      static constexpr uint32_t KRITIK_ONAY_MS = 3000;
 
       // Röle ve sensör pinleri
       int relay_pin_ = 17;         // Su kaynatma rölesi GPIO17
