@@ -20,8 +20,8 @@ değişkenler var. Her döngü adımından sonra şu değişmez denetlenir: **ke
 
 | Dosya | Ne |
 |---|---|
-| `stubs/` | Arduino (`millis`, `digitalWrite`…) ve ESPHome (`Component::set_timeout`, `Sensor`, `Switch`, `Select`, `TextSensor`, `WiFi.onEvent`) taklidi. `Switch::publish_state` gerçekteki gibi aynı değerin tekrarını yutar; `Select` yutmaz |
-| `test_main.cpp` | senaryolar |
+| `stubs/` | Arduino (`millis`, `digitalWrite`, `attachInterrupt`…) ve ESPHome (`Component::set_timeout`, `Sensor`, `Switch`, `Select`, `TextSensor`, `WiFi.onEvent`) taklidi. `Switch::publish_state` gerçekteki gibi aynı değerin tekrarını yutar; `Select` yutmaz |
+| `test_main.cpp` | senaryolar; `BrewHw` = demleme donanımının modeli (üst haznedeki su, demleme ısıtıcısının termostatı, GPIO34'teki kenarlar) |
 | `data/*.csv` | gerçek bir cihazın Home Assistant geçmişi (sıcaklık okumaları, kullanıcının işlemleri, cihazın yayınladığı durumlar); `tools/fixture_olustur.py` üretir |
 
 ## Düzeneğin doğruluğu
@@ -58,6 +58,36 @@ sensörleri) oynatıldığında gerçek cihazın yaptığı **birebir** yeniden 
 | `cay-sicak-su-konusma-sureli` — su kaynamışken çay tuşu | konuşma 960. ms'de başlıyor, 2060. ms'de seviye bip'i kesiyor | bip 2060. ms, konuşma 2660. ms; sonraki 6 sn'de başka ses yok |
 | `cay-kettle-kaldir-sureli` — demlerken kettle 20 sn kaldırılıp konuyor | demleme rölesi bir daha çekilmiyor (toplam 62 sn), 432. sn'de "çay demlendi" | röle yeniden çekiliyor (toplam 410 sn), 670. sn'de hazır |
 | **Toplam** | **10 / 25** | **25 / 25** |
+
+### Demlemede "su bitti" algısı ve kendiliğinden kapanma
+
+"Önce" = algı ve kapanma seçenekleri olmayan sürüm (yukarıdaki "sonra"). Bu senaryolar yaml'da
+`su_bitti_algisi_switch` ve `otomatik_kapanma` verilmiş gibi kurulur.
+
+**Donanım modelinin doğruluğu:** modelin sayıları gerçek bir cihazda ölçüldü (röle bırakılmışken 140 kenar/sn, üst
+hazne boşken termostat kuruda ~40 sn'de açıyor, 7 dk 40 sn sonra kapanıyor; işaret kettle'ın yerinde olmasından
+bağımsız). `data/2026-10-03-bos-hazne.csv` (o cihazda algılı sürüm yüklüyken, üst hazne boş, çay başlatılıyor)
+oynatıldığında demleme 182,900 sn'de başlıyor (cihazda 182,865) ve röle 4 kez çekiliyor (cihazda 3-4 "tik-tak"
+duyuldu). O cihazdaki sürüm "su yok" kararını bir sonraki sıcaklık okumasına kadar bekletiyordu; o sürümle karar
+230,920 sn'de (cihazda 230,878), bu sürümle aynı ölçümün sonunda (229,860 sn) veriliyor.
+
+| Senaryo | Önce | Sonra |
+|---|---|---|
+| `cay-su-bitince` — üst haznede 200 sn'lik su | röle 430 sn açık (230 sn'si kuruda), 11,2 dk'da "demlendi" | 16 sn kesintisiz, sonra 10 sn açık + 0,24 sn ölçüm; röle su bitip termostat açınca bırakılıyor (246 sn); son çekilişten 900 sn sonra "demlendi"; lamba kaynayınca beyaz |
+| `cay-bos-hazne` — üst hazne boş | demleme rölesi 430 sn açık, sonra "demlendi" | 47 sn'de anlaşılıyor; "çay demlendi" sesi, sıcak tutma, Taze; mod 2 saatte kapanıyor |
+| `replay-3eki-bos` — gerçek cihaz kaydı | — | yukarıdaki doğruluk ölçümü |
+| `cay-sicak-su-konusma` — su kaynamışken çay tuşu (algılı düzen) | — | konuşma kesilmiyor, lamba beyaz |
+| `cay-kettle-kaldir-demlerken` — kettle su aktarımı sırasında kaldırılıyor | — | demleme iptal olmuyor, kettle yokken su aktarılmıyor, geri konunca sürüyor |
+| `cay-ust-sinir` — hatta işaret hiç kesilmiyor | — | pompalama seçilen seviyenin süresinde (430 sn + en çok bir döngü) duruyor |
+| `cay-algi-yok` — girişte hiç işaret yok | — | süreli düzen birebir (430 + 240 sn, lamba kırmızı) |
+| `cay-anahtar-kapali` — "Su Bitti Algısı" anahtarı kapalı | — | süreli düzen birebir |
+| `algi-firtina` — girişte 50 000 kenar/sn | — | algı kendini kapatıyor, kesme ayrılıyor, süreli düzen |
+| `otomatik-kapanma` — su kaynatma 2 saat açık | kapanmıyor | 120,0. dakikada kapanıyor |
+| `otomatik-kapanma-yok` — seçenek verilmemiş | 3 saat sonra da açık | aynı |
+| **Toplam (bütün senaryolar)** | **24 / 36** | **36 / 36** |
+
+`SRC=<eski sürüm> ./run.sh` ile eski sürümler de derlenebilir: bu sürümdeki seçenekler `CAYSEVER_ROBOTEA_SU_BITTI_ALGISI`
+işaretiyle korunur.
 
 **Tarama** (`./run.sh tarama`): 14 ısınma hızı (1.0–6.0 °C/sn) × 4 örnekleme fazı × 3 profil (doğrusal, hızlanan,
 ±0.3 °C gürültülü) = 168 temiz ısınma durumu. Karar ve alarm anı iki sürümde **168/168 aynı** (144'ünde alarm). Yani

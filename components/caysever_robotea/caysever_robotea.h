@@ -11,6 +11,9 @@
 #include <esphome/core/component.h>
 #include <esphome/core/log.h>
 
+// Bu sürümde demlemede "su bitti" algısı ve kendiliğinden kapanma var (sınama programı buna bakar).
+#define CAYSEVER_ROBOTEA_SU_BITTI_ALGISI 1
+
 namespace esphome
 {
   namespace caysever_robotea
@@ -79,6 +82,9 @@ namespace esphome
       void set_buton_sesi_switch(switch_::Switch *buton_sesi_switch);
       void set_konusma_sesi_switch(switch_::Switch *konusma_sesi_switch);
       void set_su_kontrol_switch(switch_::Switch *su_kontrol_switch);
+      void set_su_bitti_algisi_switch(switch_::Switch *sw) { this->su_bitti_algisi_switch_ = sw; }
+      void set_demleme_hatti_sensor(sensor::Sensor *s) { this->demleme_hatti_sensor_ = s; }
+      void set_otomatik_kapanma(uint32_t ms) { this->otomatik_kapanma_ms_ = ms; }
 
       void handle_global_state_reset();
       void reset_all_operations(bool global_reset);
@@ -152,7 +158,6 @@ namespace esphome
       void record_ntc_sample_(float value); // NTC'nin her yeni okumasını zamanıyla sakla
       void enter_critical_();               // KRITIK'e geçiş: röleler, işlemler ve mod kapanır, alarm başlar
       void restore_mode_leds_();            // Aktif moda ve aşamasına göre tuş LED'ini geri yak
-      void brew_resume_after_koruma_();     // Kettle demlerken kaldırılıp konunca su aktarımını sürdür
       void handle_critical_mode_leds();
       void handle_exit_critical_mode();
       void control_led(int button_index, bool is_white = false);  // LED kontrol fonksiyonu
@@ -207,6 +212,69 @@ namespace esphome
       int relay_pin_ = 17;         // Su kaynatma rölesi GPIO17
       int demleme_relay_pin_ = 18; // Demleme rölesi GPIO18
       unsigned long current_time_;
+
+      // --- Demlemede "su bitti" algısı (GPIO34) -------------------------------------------------------------
+      // Fabrika yazılımı demlemeyi süreyle bitirmez: demleme rölesini 10 sn açık tutar, kısa bir an bırakır ve bu
+      // girişte şebeke kenarı kalıp kalmadığına bakar. Röle bırakılmışken kenar varsa demleme hattı (ısıtıcı ve
+      // kendi termostatı) sağlamdır, yani üst haznede su vardır; kenar yoksa su bitmiş, termostat açmıştır.
+      // Cihazda ölçülen: boşta 120-150 kenar/sn, röle açıkken 0, kuruda ~40 sn çalışınca işaret kesiliyor ve
+      // dakikalar sonra geri geliyor; işaret kettle'ın tabanda olup olmamasından bağımsız.
+      // Bu düzen yalnız yaml'da su_bitti_algisi_switch verilmişse, o anahtar açıksa ve cihaz açıldığından beri
+      // girişte kenar görülmüşse kullanılır; aksi hâlde demleme eskisi gibi seçilen seviyenin süresiyle yürür.
+      int brew_sense_pin_ = 34;
+      switch_::Switch *su_bitti_algisi_switch_ = nullptr;
+      sensor::Sensor *demleme_hatti_sensor_ = nullptr; // tanılama: girişte görülen kenar sayısı (kenar/sn)
+      static volatile uint32_t brew_sense_edges_;      // kesmede artar
+      static void brew_sense_isr_();
+
+      enum BrewPhase : uint8_t
+      {
+        BREW_TIMED,   // eski düzen: seviye süresi kadar röle açık + 240 sn bekleme
+        BREW_PUSH,    // ilk itiş: röle kesintisiz açık
+        BREW_ON,      // döngü: röle açık
+        BREW_SENSE,   // döngü: röle bırakıldı, kenar sayılıyor
+        BREW_STEEP    // su bitti: demlenme bekleniyor
+      };
+      BrewPhase brew_phase_{BREW_TIMED};
+      uint32_t brew_phase_start_ms_{0};
+      uint32_t brew_cycle_start_ms_{0}; // ilk ölçümün başladığı an ("erken bitti" bu andan sayılır)
+      uint32_t brew_last_on_ms_{0};     // rölenin son açıldığı an (demlenme süresi bu andan sayılır)
+      uint32_t brew_pump_ms_{0};        // rölenin bu demlemede toplam açık kaldığı süre (üst sınır için)
+      uint32_t brew_sense_base_{0};     // ölçüm penceresi başındaki kenar sayacı
+      bool brew_sense_base_taken_{false};
+      bool brew_cycle_started_{false};
+      bool brew_sense_trusted_{false};  // açılıştan beri röle bırakılmışken girişte kenar görüldü
+      bool brew_sense_fault_{false};    // girişte anlamsız hızda kenar görüldü; algı bu açılış için devre dışı
+      uint32_t brew_win_start_ms_{0};   // tanılama/güven penceresi (1 sn)
+      uint32_t brew_win_base_{0};
+      bool brew_win_clean_{false};      // pencere boyunca röle bırakılmış ve kettle yerindeydi
+      bool brew_win_open_{false};
+      bool brew_win_relay_off_{false};  // pencere boyunca röle bırakılmıştı (kettle yerinde olmasa da)
+      int brew_rate_published_{-1};     // tanılama sensöründe son yayınlanan değer (-1 = henüz yok)
+
+      static constexpr uint32_t BREW_PUSH_MS = 16000;        // fabrika: ilk 16 sn kesintisiz
+      static constexpr uint32_t BREW_ON_MS = 10000;          // fabrika: her döngüde 10 sn açık
+      static constexpr uint32_t BREW_SENSE_SETTLE_MS = 40;   // röle kontağının bırakması için
+      static constexpr uint32_t BREW_SENSE_WINDOW_MS = 200;  // ölçüm penceresi (fabrika ~150 ms)
+      static constexpr uint32_t BREW_SENSE_MIN_EDGES = 6;    // fabrika eşiği: bundan az kenar = su bitti
+      static constexpr uint32_t BREW_EARLY_MS = 60000;       // döngünün ilk 60 sn'sinde biterse üst hazne boştu: demlenme beklenmez
+      static constexpr uint32_t BREW_STEEP_MS = 900000;      // fabrika: son röle açılışından 900 sn sonra çay hazır
+      static constexpr uint32_t BREW_TRUST_MIN_RATE = 30;    // kenar/sn: güven için en az (6 kenar / 200 ms'nin karşılığı)
+      static constexpr uint32_t BREW_STORM_RATE = 2000;      // kenar/sn: bunun üstü şebeke işareti olamaz
+
+      bool brew_sense_usable_() const;
+      void update_brew_sense_();
+      void handle_brew_cycle_();
+      void brew_set_relay_(bool on);
+      void brew_resume_after_koruma_();
+      void brew_empty_finish_();
+      void publish_brew_rate_(uint32_t rate, bool force = false);
+      void finish_demleme_();
+
+      // Kendiliğinden kapanma (fabrika: mod açıldıktan 2 saat sonra). 0 = kapalı (eski davranış).
+      uint32_t otomatik_kapanma_ms_{0};
+      uint32_t mode_start_ms_{0};
+      void check_auto_off_();
 
       unsigned long demleme_start_time_ = 0; // Demleme işlemi başlangıç zamanı
       unsigned long demleme_end_time_ = 0;   // Demleme işlemi bitiş zamanı

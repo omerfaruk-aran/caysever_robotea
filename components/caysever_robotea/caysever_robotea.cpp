@@ -10,6 +10,14 @@ namespace esphome
     {
         static const char *const TAG = "caysever_robotea";
 
+        volatile uint32_t CayseverRobotea::brew_sense_edges_ = 0;
+
+        // Demleme hattı girişindeki her kenarda çalışır; yalnız sayar.
+        void IRAM_ATTR CayseverRobotea::brew_sense_isr_()
+        {
+            brew_sense_edges_ = brew_sense_edges_ + 1;
+        }
+
         void CayseverRobotea::setup()
         {
             // Röle pinleri her şeyden önce: aşağıdaki LED yanıp sönmesi 3 sn sürüyor, o sırada da kapalı sürülmüş olsunlar
@@ -50,6 +58,13 @@ namespace esphome
                 pinMode(this->sound_pins_[i], OUTPUT);
                 digitalWrite(this->sound_pins_[i], LOW);
             }
+            // "Su bitti" algısı istenmişse demleme hattı girişini dinlemeye başla (yalnız giriş, hiçbir şeyi sürmez)
+            if (this->su_bitti_algisi_switch_ != nullptr)
+            {
+                pinMode(this->brew_sense_pin_, INPUT);
+                attachInterrupt(digitalPinToInterrupt(this->brew_sense_pin_), CayseverRobotea::brew_sense_isr_, CHANGE);
+            }
+
             this->current_mode_ = MODE_KAPALI;
             this->publish_mode_();
             // Wi-Fi olaylarını dinle
@@ -211,6 +226,8 @@ namespace esphome
                 }
             }
 
+            this->update_brew_sense_();
+
             if (this->kettle_durumu_ == NORMAL)
             {
                 this->check_water_level();
@@ -261,6 +278,8 @@ namespace esphome
             this->handle_critical_sounds();
 
             this->process_demleme_feedback_();
+
+            this->check_auto_off_();
 
             this->publish_tazelik_();
         }
@@ -445,12 +464,14 @@ namespace esphome
                 break;
 
             case MODE_CAY_DEMLEME:
-                if (this->cay_demleme_durumu_ == DEMLEME_HAZIRLIK || this->cay_demleme_durumu_ == DEMLEME_BASLADI)
+                if (this->cay_demleme_durumu_ == DEMLEME_HAZIRLIK ||
+                    (this->cay_demleme_durumu_ == DEMLEME_BASLADI && this->brew_phase_ == BREW_TIMED))
                 {
                     this->control_led(3, false);
                 }
-                else if (this->cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA)
+                else if (this->cay_demleme_durumu_ == DEMLEME_BASLADI || this->cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA)
                 {
+                    // Algılı düzende lamba fabrikadaki gibi: ısıtırken kırmızı, su kaynayınca beyaz
                     this->control_led(3, true);
                 }
                 break;
@@ -755,6 +776,9 @@ namespace esphome
             }
             this->relay_active_ = false;     // Röle durumu sıfırla
             this->dem_relay_active_ = false; // Demleme Röle durumu sıfırla
+            this->brew_phase_ = BREW_TIMED;
+            this->brew_cycle_started_ = false;
+            this->brew_pump_ms_ = 0;
 
             // Tüm LED'leri kapat
             this->control_led(-1); // -1: tüm LED'leri kapat
@@ -1265,12 +1289,31 @@ namespace esphome
                     this->update_all_sensors();
 
                     this->demleme_start_time_ = this->current_time_; // Başlangıç zamanını kaydet
-                    digitalWrite(this->demleme_relay_pin_, HIGH);    // Demleme rölesini aç
-                    this->dem_relay_active_ = true;
                     ESP_LOGI("CayseverRobotea", "Sıcaklık: %.2f°C, Kaynama tamamlandı, çay demleme başladı.", temperature);
 
-                    // LED güncellemesi ve sesli uyarı
-                    this->control_led(3); // Tuş 4 kırmızı LED
+                    if (this->brew_sense_usable_())
+                    {
+                        // Fabrikadaki düzen: 16 sn kesintisiz itiş, sonra "10 sn açık, kısa ölçüm" döngüsü; su bitince durur
+                        this->brew_phase_ = BREW_PUSH;
+                        this->brew_phase_start_ms_ = this->current_time_;
+                        this->brew_last_on_ms_ = this->current_time_;
+                        this->brew_pump_ms_ = 0;
+                        this->brew_cycle_started_ = false;
+                        this->brew_set_relay_(true);
+                        this->control_led(3, true); // su kaynadı: lamba beyaz
+                        ESP_LOGI("CayseverRobotea", "Demleme: su bitti algısıyla yürütülüyor (üst sınır %u sn).", this->demleme_suresi_);
+                    }
+                    else
+                    {
+                        if (this->su_bitti_algisi_switch_ != nullptr && this->su_bitti_algisi_switch_->state)
+                        {
+                            ESP_LOGW("CayseverRobotea", "Demleme hattında işaret görülmedi; demleme süreyle yürütülecek (%u sn).", this->demleme_suresi_);
+                        }
+                        this->brew_phase_ = BREW_TIMED;
+                        this->brew_set_relay_(true); // Demleme rölesini aç
+                        this->control_led(3);        // Tuş 4 kırmızı LED
+                    }
+
                     this->play_cay_demleme_start_sound();
                 }
                 else if (temperature >= 93.0f)
@@ -1312,6 +1355,12 @@ namespace esphome
                 if (this->kettle_durumu_ != NORMAL)
                     return; // aşırı ısınma kesmesi her şeyi kapattı; aşağıdaki süre mantığı durumu yeniden kurmasın
 
+                if (this->brew_phase_ != BREW_TIMED)
+                {
+                    this->handle_brew_cycle_();
+                    break;
+                }
+
                 // Demleme süresini kontrol et
                 if (this->current_time_ - this->demleme_start_time_ >= this->demleme_suresi_ * 1000)
                 {
@@ -1329,21 +1378,7 @@ namespace esphome
                     }
                     else if (this->current_time_ - this->demleme_end_time_ >= 240000)
                     {
-                        this->cay_demleme_durumu_ = DEMLEME_SICAKLIK_KORUMA;
-                        this->update_all_sensors();
-
-                        ESP_LOGI("CayseverRobotea", "Çay demleme işlemi tamamlandı.");
-
-                        // LED güncellemesi ve sesli uyarı
-                        this->control_led(3, true);
-                        if (digitalRead(this->dem_led_pin_) != HIGH)
-                        {
-                            digitalWrite(this->dem_led_pin_, HIGH);
-                        }
-
-                        this->play_cay_demleme_done_sound();
-                        this->demled_start_time_ = this->current_time_;
-                        this->demled_active_ = true;
+                        this->finish_demleme_();
                     }
                 }
 
@@ -1382,20 +1417,265 @@ namespace esphome
             }
         }
 
-        // Kettle demleme sırasında kaldırılıp geri kondu. KORUMA'ya girerken demleme rölesi bırakılmıştı; süre
-        // dolmadıysa yeniden çekilir. Yoksa kettle bir kez kaldırılınca su aktarımı o demlemede bir daha başlamıyor,
-        // süre dolunca yine de "çay demlendi" deniyordu.
+        // Demleme bitti: sıcak tutmaya geç, Dem lambasını yak, haber ver, tazelik süresini başlat.
+        void CayseverRobotea::finish_demleme_()
+        {
+            this->cay_demleme_durumu_ = DEMLEME_SICAKLIK_KORUMA;
+            this->update_all_sensors();
+
+            ESP_LOGI("CayseverRobotea", "Çay demleme işlemi tamamlandı.");
+
+            // LED güncellemesi ve sesli uyarı
+            this->control_led(3, true);
+            if (digitalRead(this->dem_led_pin_) != HIGH)
+            {
+                digitalWrite(this->dem_led_pin_, HIGH);
+            }
+
+            this->play_cay_demleme_done_sound();
+            this->demled_start_time_ = this->current_time_;
+            this->demled_active_ = true;
+        }
+
+        void CayseverRobotea::brew_set_relay_(bool on)
+        {
+            digitalWrite(this->demleme_relay_pin_, on ? HIGH : LOW);
+            this->dem_relay_active_ = on;
+        }
+
+        // Algı kullanılabilir mi: yaml'da anahtar verilmiş ve açık, girişte bu açılışta kenar görülmüş, arıza yok.
+        bool CayseverRobotea::brew_sense_usable_() const
+        {
+            return this->su_bitti_algisi_switch_ != nullptr && this->su_bitti_algisi_switch_->state &&
+                   this->brew_sense_trusted_ && !this->brew_sense_fault_;
+        }
+
+        // Demleme hattı girişini 1 sn'lik pencerelerle izler. Demleme rölesi bırakılmış ve kettle yerindeyken kenar
+        // görülmüşse algıya güvenilir (o âna kadar demleme eski, süreli düzenle yürür). Tanılama sensörünü besler.
+        void CayseverRobotea::update_brew_sense_()
+        {
+            if (this->su_bitti_algisi_switch_ == nullptr || this->brew_sense_fault_)
+                return;
+
+            // Pencere "temiz" sayılır: boyunca demleme rölesi bırakılmış ve demleme döngüsü çalışmıyor (döngü kendi
+            // ölçümünü ayrıca yayınlar). Güven için ayrıca kettle'ın yerinde olması aranır.
+            const bool relay_off_now = (digitalRead(this->demleme_relay_pin_) == LOW) &&
+                                       !(this->cay_demleme_durumu_ == DEMLEME_BASLADI && this->brew_phase_ != BREW_TIMED &&
+                                         this->brew_phase_ != BREW_STEEP);
+            const bool clean_now = relay_off_now && (this->kettle_durumu_ == NORMAL);
+
+            if (!this->brew_win_open_)
+            {
+                this->brew_win_open_ = true;
+                this->brew_win_start_ms_ = this->current_time_;
+                this->brew_win_base_ = brew_sense_edges_;
+                this->brew_win_clean_ = clean_now;
+                this->brew_win_relay_off_ = relay_off_now;
+                return;
+            }
+            if (!clean_now)
+                this->brew_win_clean_ = false;
+            if (!relay_off_now)
+                this->brew_win_relay_off_ = false;
+
+            const uint32_t el = this->current_time_ - this->brew_win_start_ms_;
+            if (el < 1000)
+                return;
+
+            const uint32_t n = brew_sense_edges_ - this->brew_win_base_;
+            const uint32_t rate = (uint32_t)(((uint64_t)n * 1000u) / el);
+            this->brew_win_open_ = false;
+
+            if (rate > BREW_STORM_RATE)
+            {
+                // Şebeke işareti saniyede ~100 kenar üretir. Bunun çok üstü gürültü ya da başka bir devredir: girişi
+                // dinlemeyi bırak, demleme süreli düzenle yürüsün.
+                detachInterrupt(digitalPinToInterrupt(this->brew_sense_pin_));
+                this->brew_sense_fault_ = true;
+                this->brew_sense_trusted_ = false;
+                ESP_LOGE("CayseverRobotea", "Demleme hattı girişinde %u kenar/sn görüldü; su bitti algısı devre dışı bırakıldı.", (unsigned)rate);
+                if (this->demleme_hatti_sensor_ != nullptr)
+                    this->demleme_hatti_sensor_->publish_state(NAN);
+                return;
+            }
+
+            if (this->brew_win_clean_ && rate >= BREW_TRUST_MIN_RATE && !this->brew_sense_trusted_)
+            {
+                this->brew_sense_trusted_ = true;
+                ESP_LOGI("CayseverRobotea", "Demleme hattı işareti görüldü (%u kenar/sn); su bitti algısı kullanılabilir.", (unsigned)rate);
+            }
+
+            // Röle bırakılmışken ölçülen pencereler yayınlanır (röle açıkken hatta işaret olmaz, bilgi taşımaz)
+            if (this->brew_win_relay_off_)
+                this->publish_brew_rate_(rate);
+        }
+
+        // Tanılama sensörü: yalnız anlamlı değişimde yayınlanır (işaret var/yok değişti ya da hız 100'den çok oynadı).
+        // Cihazda boştayken 120-150 arasında oynuyor; her oynamada yayınlamak Home Assistant geçmişini doldurur.
+        void CayseverRobotea::publish_brew_rate_(uint32_t rate, bool force)
+        {
+            if (this->demleme_hatti_sensor_ == nullptr)
+                return;
+            const int bucket = (int)((rate + 5) / 10 * 10);
+            const bool present = rate >= BREW_TRUST_MIN_RATE;
+            const bool was_present = this->brew_rate_published_ >= (int)BREW_TRUST_MIN_RATE;
+            const int diff = bucket > this->brew_rate_published_ ? bucket - this->brew_rate_published_ : this->brew_rate_published_ - bucket;
+            if (force || this->brew_rate_published_ < 0 || present != was_present || diff >= 100)
+            {
+                this->demleme_hatti_sensor_->publish_state((float)bucket);
+                this->brew_rate_published_ = bucket;
+            }
+        }
+
+        // Fabrikadaki demleme döngüsü. DEMLEME_BASLADI içinde, kettle yerindeyken her turda çağrılır.
+        void CayseverRobotea::handle_brew_cycle_()
+        {
+            const uint32_t now = this->current_time_;
+            const uint32_t el = now - this->brew_phase_start_ms_;
+
+            switch (this->brew_phase_)
+            {
+            case BREW_PUSH:
+            case BREW_ON:
+            {
+                // Kettle kaldırılıp konduysa röle KORUMA'da bırakılmıştır; aşamanın kalanında yeniden çekilir
+                if (digitalRead(this->demleme_relay_pin_) != HIGH)
+                    this->brew_set_relay_(true);
+
+                const uint32_t limit = (this->brew_phase_ == BREW_PUSH) ? BREW_PUSH_MS : BREW_ON_MS;
+                if (el >= limit)
+                {
+                    this->brew_set_relay_(false);
+                    this->brew_pump_ms_ += el;
+                    if (!this->brew_cycle_started_)
+                    {
+                        this->brew_cycle_started_ = true;
+                        this->brew_cycle_start_ms_ = now;
+                    }
+                    this->brew_phase_ = BREW_SENSE;
+                    this->brew_phase_start_ms_ = now;
+                    this->brew_sense_base_taken_ = false;
+                }
+                break;
+            }
+
+            case BREW_SENSE:
+            {
+                if (!this->brew_sense_base_taken_)
+                {
+                    if (el >= BREW_SENSE_SETTLE_MS)
+                    {
+                        this->brew_sense_base_ = brew_sense_edges_;
+                        this->brew_sense_base_taken_ = true;
+                    }
+                    break;
+                }
+                if (el < BREW_SENSE_SETTLE_MS + BREW_SENSE_WINDOW_MS)
+                    break;
+
+                const uint32_t n = brew_sense_edges_ - this->brew_sense_base_;
+                const bool water = n >= BREW_SENSE_MIN_EDGES;
+                const bool cap = this->brew_pump_ms_ >= (uint32_t)this->demleme_suresi_ * 1000u;
+                // Her ölçümün sonucu tanılama sensöründe görünsün (kenar/sn'ye çevrilmiş)
+                this->publish_brew_rate_((uint32_t)(((uint64_t)n * 1000u) / BREW_SENSE_WINDOW_MS), true);
+
+                if (water && !cap)
+                {
+                    this->brew_set_relay_(true);
+                    this->brew_phase_ = BREW_ON;
+                    this->brew_phase_start_ms_ = now;
+                    this->brew_last_on_ms_ = now;
+                    break;
+                }
+
+                if (water)
+                {
+                    ESP_LOGW("CayseverRobotea", "Demleme: hatta hâlâ işaret var ama üst sınıra (%u sn) varıldı; pompalama durduruldu.", this->demleme_suresi_);
+                }
+                else
+                {
+                    ESP_LOGI("CayseverRobotea", "Demleme: hatta işaret yok (%u kenar), su bitmiş görünüyor (pompalama %u sn).", (unsigned)n, (unsigned)(this->brew_pump_ms_ / 1000));
+                    if (now - this->brew_cycle_start_ms_ <= BREW_EARLY_MS)
+                    {
+                        this->brew_empty_finish_();
+                        return;
+                    }
+                }
+                ESP_LOGI("CayseverRobotea", "Demleme: su aktarımı bitti, demlenme bekleniyor.");
+                this->brew_phase_ = BREW_STEEP;
+                this->brew_phase_start_ms_ = now;
+                break;
+            }
+
+            case BREW_STEEP:
+                if (now - this->brew_last_on_ms_ >= BREW_STEEP_MS)
+                {
+                    this->finish_demleme_();
+                }
+                break;
+
+            default:
+                break;
+            }
+        }
+
+        // Kettle demleme sırasında kaldırılıp geri kondu. KORUMA'ya girerken demleme rölesi bırakılmıştı (demlik kettle'ın
+        // üstünde durduğu için kettle yokken su aktarılmaz); geri konunca aktarıma yeni bir açık aşamayla devam edilir.
+        // (Demleme hattındaki işaret kettle'dan bağımsızdır: cihazda kettle kaldırılmışken de sürdüğü ölçüldü.)
         void CayseverRobotea::brew_resume_after_koruma_()
         {
             if (this->cay_demleme_durumu_ != DEMLEME_BASLADI)
                 return;
 
-            if (this->current_time_ - this->demleme_start_time_ < this->demleme_suresi_ * 1000)
+            if (this->brew_phase_ == BREW_TIMED)
             {
-                ESP_LOGI("CayseverRobotea", "Demleme: kettle geri kondu, su aktarımı sürüyor.");
-                digitalWrite(this->demleme_relay_pin_, HIGH);
-                this->dem_relay_active_ = true;
+                // Süreli düzen: KORUMA'ya girerken demleme rölesi bırakıldı. Süre dolmadıysa yeniden çekilir; yoksa
+                // kettle bir kez kaldırılınca su aktarımı o demlemede bir daha başlamıyordu.
+                if (this->current_time_ - this->demleme_start_time_ < this->demleme_suresi_ * 1000)
+                {
+                    ESP_LOGI("CayseverRobotea", "Demleme: kettle geri kondu, su aktarımı sürüyor.");
+                    this->brew_set_relay_(true);
+                }
+                return;
             }
+
+            if (this->brew_phase_ != BREW_PUSH && this->brew_phase_ != BREW_ON && this->brew_phase_ != BREW_SENSE)
+                return;
+
+            if (this->brew_phase_ == BREW_PUSH || this->brew_phase_ == BREW_ON)
+            {
+                // Kaldırılana kadar röle açıktı; o süreyi üst sınır hesabına kat
+                const uint32_t ran = this->koruma_start_ms_ - this->brew_phase_start_ms_;
+                if (ran <= BREW_PUSH_MS)
+                    this->brew_pump_ms_ += ran;
+            }
+            ESP_LOGI("CayseverRobotea", "Demleme: kettle geri kondu, su aktarımı sürüyor.");
+            this->brew_phase_ = BREW_ON;
+            this->brew_phase_start_ms_ = this->current_time_;
+            this->brew_last_on_ms_ = this->current_time_;
+            this->brew_set_relay_(true);
+        }
+
+        // Üst haznede su yok: demleme başlar başlamaz bitti (ilk ölçümlerde hatta işaret kalmadı). Aktarılacak su
+        // olmadığına göre demlenme beklenmez: doğrudan "çay hazır" denir, sıcak tutma ve tazelik süresi başlar.
+        void CayseverRobotea::brew_empty_finish_()
+        {
+            ESP_LOGW("CayseverRobotea", "Demleme: üst haznede su yok (ilk %u sn içinde bitti); demlenme beklenmeden sıcak tutmaya geçiliyor.", (unsigned)(BREW_EARLY_MS / 1000));
+            this->brew_set_relay_(false);
+            this->brew_phase_ = BREW_STEEP;
+            this->finish_demleme_();
+        }
+
+        // Mod açıldıktan otomatik_kapanma süresi sonra cihaz kendini kapatır (fabrika yazılımında 2 saat).
+        void CayseverRobotea::check_auto_off_()
+        {
+            if (this->otomatik_kapanma_ms_ == 0 || this->current_mode_ == MODE_KAPALI || this->pending_mode_change_)
+                return;
+            if (this->current_time_ - this->mode_start_ms_ < this->otomatik_kapanma_ms_)
+                return;
+
+            ESP_LOGW("CayseverRobotea", "Mod %u dakikadır açık; cihaz kendiliğinden kapatılıyor.", (unsigned)(this->otomatik_kapanma_ms_ / 60000));
+            this->set_mode(MODE_KAPALI, 0);
         }
 
         void CayseverRobotea::maintain_temperature(float min, float max)
@@ -1943,6 +2223,10 @@ namespace esphome
 
             // 2) Yeni modu ayarla
             this->current_mode_ = new_mode;
+            if (new_mode != MODE_KAPALI)
+            {
+                this->mode_start_ms_ = millis(); // kendiliğinden kapanma bu andan sayılır
+            }
 
             // 3) Yeni mod ON işlemleri
             switch (new_mode)

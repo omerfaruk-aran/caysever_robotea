@@ -24,6 +24,7 @@ namespace
   const int DEM_LED = 21;
   const int BTN_LEDS[5] = {15, 25, 13, 5, 26};
   const int TOUCH[4] = {12, 14, 27, 33}; // 0=mama suyu, 2=su kaynatma, 3=çay demleme
+  const int BREW_SENSE = 34;             // demleme hattı girişi ("su bitti" algısı)
   const int SOUND[3] = {4, 19, 32};
   const uint32_t STEP_MS = 20;           // ESPHome döngü aralığına yakın
   const uint32_t SAMPLE_MS = 2000;       // yaml'daki adc update_interval
@@ -57,13 +58,102 @@ namespace
     using CayseverRobotea::mama_suyu_durumu_;
     using CayseverRobotea::relay_active_;
     using CayseverRobotea::su_kaynatma_durumu_;
+#ifdef CAYSEVER_ROBOTEA_SU_BITTI_ALGISI
+    using CayseverRobotea::brew_phase_;
+    using CayseverRobotea::brew_pump_ms_;
+    using CayseverRobotea::brew_sense_fault_;
+    using CayseverRobotea::brew_sense_trusted_;
+    using CayseverRobotea::BREW_TIMED;
+#endif
+  };
+
+  // Demleme donanımının modeli: üst haznedeki su demleme rölesi açıkken azalır; su bitince ısıtıcı kuruda ısınır
+  // ve kendi termostatı açar. Demleme rölesi bırakılmışken hat sağlamsa (termostat kapalı) GPIO34'te şebeke kenarları
+  // görülür; işaret kettle'ın tabanda olup olmamasına bağlı değildir (cihazda 3 Eki 01:18'de ölçüldü). Kaynak: fabrika yazılımının çözümlemesi; sayılar cihazda 3 Eki 2026 01:0x'te ölçüldü
+  // (boşta 120-150 kenar/sn; röle açıkken 0; kuruda ~40 sn'lik çalışmadan sonra işaret kesildi, 7 dk 40 sn sonra döndü).
+  struct BrewHw
+  {
+    bool present = false;       // GPIO34 devresi var mı (false: giriş hep sessiz)
+    float water_s = 0.0f;       // üst haznedeki su, "pompalama saniyesi" cinsinden
+    bool kettle = true;         // kettle tabanda mı (yalnız senaryoların okunurluğu için; işareti etkilemez)
+    bool stuck = false;         // termostat hiç açmıyor (algı hep "su var" der)
+    bool thermostat_open = false;
+    float dry_s = 0.0f, cool_s = 0.0f;
+    float dry_trip_s = 40.0f;   // kuruda bu kadar (röle açık süresi) ısınınca termostat açar (cihazda 36-46 sn arası)
+    float reclose_s = 460.0f;   // röle bırakıldıktan bu kadar sonra yeniden kapanır (cihazda 7 dk 40 sn)
+    float edges_per_s = 140.0f; // cihazda boşta ölçülen
+    double acc = 0.0;
+    uint32_t dem_on_ms = 0;     // demleme rölesinin toplam açık kaldığı süre
+    uint32_t dem_dry_ms = 0;    // bunun su yokken geçen kısmı
+    uint32_t first_off_ms = 0;  // rölenin ilk bırakıldığı an
+    uint32_t last_on_edge_ms = 0; // rölenin son çekildiği an
+    uint32_t max_gap_ms = 0, gap_start_ms = 0; // pompalama sırasındaki en uzun bırakma
+    int on_edges = 0;
+    bool was_on = false;
+
+    void advance(bool dem_on, uint32_t ms, bool kettle_ok)
+    {
+      float dt = ms / 1000.0f;
+      if (dem_on && !was_on)
+      {
+        on_edges++;
+        last_on_edge_ms = millis();
+        if (gap_start_ms != 0)
+          max_gap_ms = std::max(max_gap_ms, millis() - gap_start_ms);
+      }
+      if (!dem_on && was_on)
+      {
+        if (first_off_ms == 0)
+          first_off_ms = millis();
+        gap_start_ms = millis();
+      }
+      was_on = dem_on;
+
+      (void)kettle_ok;
+      if (dem_on)
+      {
+        dem_on_ms += ms;
+        cool_s = 0.0f;
+        if (water_s > 0.0f)
+          water_s -= dt;
+        else
+        {
+          dem_dry_ms += ms;
+          dry_s += dt;
+          if (!stuck && dry_s >= dry_trip_s)
+            thermostat_open = true;
+        }
+      }
+      else if (thermostat_open)
+      {
+        cool_s += dt;
+        if (cool_s >= reclose_s)
+        {
+          thermostat_open = false;
+          dry_s = 0.0f;
+        }
+      }
+
+      if (present && !dem_on && !thermostat_open && hoststub::st().isr[BREW_SENSE] != nullptr)
+      {
+        acc += edges_per_s * dt;
+        while (acc >= 1.0)
+        {
+          hoststub::st().isr[BREW_SENSE]();
+          acc -= 1.0;
+        }
+      }
+    }
   };
 
   struct Rig
   {
     Exposed dev;
     sensor::Sensor ntc, tazelik_kalan;
-    switch_::Switch su_kaynatma, mama_suyu, buton_sesi, konusma_sesi, su_kontrol;
+    switch_::Switch su_kaynatma, mama_suyu, buton_sesi, konusma_sesi, su_kontrol, su_bitti;
+    sensor::Sensor demleme_hatti;
+    BrewHw hw;
+    bool has_brew_sense = false;                             // bu derlemede "su bitti" algısı var ve istenmiş
     std::vector<std::pair<uint32_t, std::string>> sounds;    // ses çipine giden tetikler: (an, pinler)
     std::string last_sound_pat;
     select::Select cay;
@@ -79,8 +169,22 @@ namespace
     int sound_pulses = 0;        // ses çipine giden tetik sayısı (GPIO4 yükselen kenar)
     int last_sound_pin = LOW;
 
-    explicit Rig(bool with_select = true, bool su_kontrol_on = true)
+    explicit Rig(bool with_select = true, bool su_kontrol_on = true, bool brew_sense = false, uint32_t auto_off_ms = 0)
     {
+#ifdef CAYSEVER_ROBOTEA_SU_BITTI_ALGISI
+      if (brew_sense)
+      {
+        dev.set_su_bitti_algisi_switch(&su_bitti);
+        dev.set_demleme_hatti_sensor(&demleme_hatti);
+        su_bitti.publish_state(true);
+        has_brew_sense = true;
+      }
+      if (auto_off_ms)
+        dev.set_otomatik_kapanma(auto_off_ms);
+#else
+      (void)brew_sense;
+      (void)auto_off_ms;
+#endif
       for (int p : TOUCH)
         hoststub::st().pin_level[p] = HIGH; // tuşlar bırakılmış (basılı = LOW)
       dev.set_ntc_sensor(&ntc);
@@ -106,6 +210,7 @@ namespace
     void step(uint32_t ms = STEP_MS)
     {
       hoststub::st().now_ms += ms;
+      hw.advance(digitalRead(DEM_RELAY) == HIGH, ms, hw.kettle); // geçen sürede rölenin durumuna göre su ve kenarlar
       dev.host_run_scheduler();
       dev.loop();
       steps++;
@@ -960,12 +1065,340 @@ namespace
     return 0;
   }
 
+  // ---------------------------------------------------------------------------------------------
+  // Demlemede "su bitti" algısı (fabrika düzeni) ve kendiliğinden kapanma
+  // ---------------------------------------------------------------------------------------------
+  int scenario_cay_sicak_su_konusma()
+  {
+    Rig rig(true, true, true);
+    rig.hw.present = true;
+    rig.hw.water_s = 300.0f;
+    return konusma_kesilmiyor(rig, "algılı", "11000", "lamba beyaz (fabrika düzeni)");
+  }
+
+  int scenario_cay_su_bitince()
+  {
+    // Üst haznede 200 sn'lik su var. Fabrika düzeni: 16 sn kesintisiz, sonra 10 sn açık + kısa ölçüm; su bitince
+    // röle bırakılır; son açılıştan 900 sn sonra çay hazır.
+    Rig rig(true, true, true);
+    rig.hw.present = true;
+    rig.hw.water_s = 200.0f;
+    Thermal th{60.0f, 0.30f, 0.05f, true};
+    uint32_t t_b = start_tea_until_brewing(rig, th);
+    bool trusted = false;
+#ifdef CAYSEVER_ROBOTEA_SU_BITTI_ALGISI
+    trusted = rig.dev.brew_sense_trusted_;
+#endif
+    std::string led_brewing;
+    bool led_sampled = false;
+    run_thermal(rig, th, 40 * 60000, [&](int, float v) {
+      if (!led_sampled && rig.dev.cay_demleme_durumu_ == DEMLEME_BASLADI && millis() - t_b > 5000)
+      {
+        led_brewing = rig.btn_leds();
+        led_sampled = true;
+      }
+      return v;
+    }, [&] { return rig.dev.cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA; });
+    uint32_t t_done = millis();
+    uint32_t first_on_stretch = rig.hw.first_off_ms ? rig.hw.first_off_ms - t_b : 0;
+    uint32_t steep = t_done - rig.hw.last_on_edge_ms;
+    printf("  ölçüm: algı %s · ilk kesintisiz itiş %.1f sn · röle toplam açık %.1f sn (su 200 sn) · kuruda %.1f sn · açma sayısı %d · en uzun ölçüm arası %u ms\n",
+           trusted ? "güvenilir" : "YOK", first_on_stretch / 1000.0, rig.hw.dem_on_ms / 1000.0, rig.hw.dem_dry_ms / 1000.0, rig.hw.on_edges, rig.hw.max_gap_ms);
+    printf("         son açılıştan çay hazıra %.1f sn · başlangıçtan hazıra %.1f dk · demlerken lamba %s · tazelik %s\n", steep / 1000.0,
+           (t_done - t_b) / 60000.0, led_brewing.c_str(), rig.tazelik.state.c_str());
+    check(t_b != 0 && trusted, "hazırlık: algı girişte işareti gördü, demleme başladı");
+    check(first_on_stretch >= 15900 && first_on_stretch <= 16100, "ilk itiş 16 sn kesintisiz (fabrikadaki gibi)");
+    check(rig.hw.dem_on_ms >= 240000 && rig.hw.dem_on_ms <= 251500, "röle su bitene kadar açık kaldı; termostat açınca (kuruda ~40 sn) bırakıldı");
+    check(rig.hw.dem_dry_ms <= 51500, "ısıtıcı kuruda yalnız termostatı açana kadar çalıştı (eski düzende 230 sn çalışırdı)");
+    check(rig.hw.max_gap_ms <= 300, "pompalama sırasında ölçüm için bırakma 0,3 sn'yi geçmedi");
+    check(steep >= 899000 && steep <= 902500, "çay, son röle açılışından 900 sn sonra hazır");
+    check(led_brewing == "11000", "su kaynayınca çay lambası beyaz (fabrikadaki gibi)");
+    check(rig.dev.cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA && rig.tazelik.state == "Taze" && digitalRead(DEM_LED) == HIGH, "sonunda sıcak tutma, Taze, Dem lambası yanık");
+    check(rig.first_kritik_ms == 0 && rig.violations == 0, "KRITIK yok, ihlal yok");
+    return 0;
+  }
+
+  int scenario_cay_bos_hazne()
+  {
+    // Üst hazne boş, kettle'da su var, çay başlatıldı (3 Eki 2026'da gerçek cihazda denenen durum). Beklenen: cihaz suyu
+    // itmeyi dener, su olmadığını anlar, "çayınız hazır" der ve sıcak tutmaya (tazelik döngüsüne) geçer.
+    const uint32_t two_h = 2 * 60 * 60000;
+    Rig rig(true, true, true, two_h);
+    rig.hw.present = true;
+    rig.hw.water_s = 0.0f;
+    Thermal th{100.5f, 0.30f, 0.05f, true};
+    uint32_t t_b = start_tea_until_brewing(rig, th);
+    size_t sounds_before = rig.sounds.size();
+    run_thermal(rig, th, 15 * 60000, nullptr, [&] { return rig.dev.cay_demleme_durumu_ != DEMLEME_BASLADI; });
+    uint32_t t_end = millis();
+    for (auto it = rig.mod_durumu.changes.rbegin(); it != rig.mod_durumu.changes.rend(); ++it)
+      if (it->second == "SICAKLIK_KORUMA" || it->second == "KAPALI")
+      {
+        t_end = it->first;
+        break;
+      }
+    rig.hold(99.0f, 6000);
+    int beeps = 0, done_speech = 0;
+    for (size_t i = sounds_before; i < rig.sounds.size(); i++)
+    {
+      if (rig.sounds[i].second == "4+32")
+        beeps++;
+      if (rig.sounds[i].second == "4+19")
+        done_speech++;
+    }
+    uint32_t dem_on = rig.hw.dem_on_ms;
+    int on_edges = rig.hw.on_edges;
+    bool keepwarm = rig.dev.cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA && rig.dev.current_mode_ == MODE_CAY_DEMLEME;
+    std::string taz = rig.tazelik.state, leds = rig.btn_leds();
+    int dem_led = digitalRead(DEM_LED);
+    // Sıcak tutma sürüyor mu: su 90 °C'ye düşerse ısıtıcı yeniden açılmalı
+    long relay_before = rig.relay_on_ms;
+    th.t = 90.0f;
+    run_thermal(rig, th, 60000);
+    bool reheats = rig.relay_on_ms > relay_before;
+    // 2 saat dolunca kendiliğinden kapanır
+    run_thermal(rig, th, two_h, nullptr, [&] { return rig.dev.current_mode_ == MODE_KAPALI; });
+    printf("  ölçüm: demleme başladıktan %.1f sn sonra bitti · demleme rölesi toplam %.1f sn açık, %d kez çekildi (eski düzende 430 sn) · \"çay hazır\" konuşması %d · bip %d\n",
+           t_b ? (t_end - t_b) / 1000.0 : -1.0, dem_on / 1000.0, on_edges, done_speech, beeps);
+    printf("         sonra: %s · tazelik %s · lamba %s · Dem lambası %d · su soğuyunca ısıtma %s · 2 saat sonunda mod %s\n", keepwarm ? "sıcak tutma" : "KAPALI",
+           taz.c_str(), leds.c_str(), dem_led, reheats ? "var" : "YOK", rig.aktif_mod.state.c_str());
+    check(t_b != 0, "hazırlık: demleme başladı");
+    check(t_end - t_b >= 46000 && t_end - t_b <= 50500, "su olmadığı ~48 sn'de anlaşıldı (cihazda ölçülen: 48,0 sn)");
+    check(on_edges == 4 && dem_on <= 47000, "demleme rölesi dört kez çekildi (ilk itiş + 3 ölçüm arası), termostat açınca bırakıldı");
+    check(done_speech == 1 && beeps == 0, "\"çayınız hazır\" konuşması çaldı; bip yok");
+    check(keepwarm && taz == "Taze" && dem_led == HIGH && leds == "11000", "çay modu açık kaldı: sıcak tutma, Taze, Dem lambası ve beyaz tuş lambası");
+    check(reheats, "sıcak tutma çalışıyor (su soğuyunca ısıtıcı açıldı)");
+    check(rig.dev.current_mode_ == MODE_KAPALI && rig.relays_off(), "mod açıldıktan 2 saat sonra kendiliğinden kapandı");
+    check(rig.first_kritik_ms == 0 && rig.violations == 0, "KRITIK yok, ihlal yok");
+    return 0;
+  }
+
+  // 3 Eki 2026 01:02-01:07 gerçek cihaz kaydı (2. paketin ilk hâli yüklüyken, üst hazne boş): sıcaklıklar ve çay
+  // başlatma aynen oynatılır. Cihazda DEMLEME_BASLADI 01:05:02.865'te, "su yok" kararı 48,013 sn sonra verildi.
+  // Düzenek (donanım modeliyle birlikte) aynı ânı üretiyor mu?
+  int scenario_replay_3eki_bos()
+  {
+    Rig rig(true, true, true);
+    rig.hw.present = true;
+    rig.hw.water_s = 0.0f;
+    auto rows = load_csv("data/2026-10-03-bos-hazne.csv");
+    size_t i = 0;
+    while (millis() < 300000)
+    {
+      while (i < rows.size() && rows[i].t_ms <= millis())
+      {
+        const Row &r = rows[i++];
+        if (r.type == "T" || r.type == "t")
+          rig.feed(std::stof(r.value));
+        else if (r.type == "CMD" && r.value.rfind("cay=", 0) == 0)
+          rig.cay.publish_state(r.value.substr(4));
+      }
+      rig.step();
+    }
+    uint32_t t_bas = 0, t_son = 0;
+    std::string son;
+    for (auto &c : rig.mod_durumu.changes)
+    {
+      if (c.second == "DEMLEME_BASLADI" && t_bas == 0)
+        t_bas = c.first;
+      else if (t_bas != 0 && t_son == 0 && c.second != "DEMLEME_BASLADI")
+      {
+        t_son = c.first;
+        son = c.second;
+      }
+    }
+    const uint32_t real_bas = 182865, real_son = 230878;
+    printf("  ölçüm: DEMLEME_BASLADI düzenekte %.3f sn, cihazda %.3f sn · \"su yok\" kararı düzenekte %.3f sn (%s), cihazda %.3f sn · demleme rölesi %d kez çekildi (cihazda 3-4 \"tik-tak\" duyuldu)\n",
+           t_bas / 1000.0, real_bas / 1000.0, t_son / 1000.0, son.c_str(), real_son / 1000.0, rig.hw.on_edges);
+    auto near = [](uint32_t a, uint32_t b, uint32_t tol) { return (a > b ? a - b : b - a) <= tol; };
+    check(near(t_bas, real_bas, 100), "demleme, gerçek cihazla aynı anda başladı");
+    // Cihazdaki sürüm kararı bir sonraki sıcaklık okumasına kadar bekletiyordu (en çok 2 sn); şimdiki kod bekletmiyor.
+    check(t_son + 1300 >= real_son && t_son <= real_son + 100, "\"üst haznede su yok\" kararı gerçek cihazla aynı ölçümde verildi (cihazda 48,0 sn sonra)");
+    check(rig.hw.on_edges == 4, "röle dört kez çekildi: ilk itiş + üç ölçüm arası");
+    check(rig.first_kritik_ms == 0 && rig.violations == 0, "KRITIK yok, ihlal yok");
+    return 0;
+  }
+
+  int scenario_cay_algi_yok()
+  {
+    // Algı istenmiş ama girişte hiç işaret yok (devre farklıysa ya da bozuksa): eski, süreli düzen aynen sürmeli.
+    Rig rig(true, true, true);
+    rig.hw.present = false;
+    rig.hw.water_s = 200.0f;
+    Thermal th{60.0f, 0.30f, 0.05f, true};
+    uint32_t t_b = start_tea_until_brewing(rig, th);
+    std::string led_brewing;
+    bool led_sampled = false;
+    run_thermal(rig, th, 40 * 60000, [&](int, float v) {
+      if (!led_sampled && millis() - t_b > 5000)
+      {
+        led_brewing = rig.btn_leds();
+        led_sampled = true;
+      }
+      return v;
+    }, [&] { return rig.dev.cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA; });
+    uint32_t total = millis() - t_b;
+    printf("  ölçüm: röle toplam açık %.1f sn · açma sayısı %d · başlangıçtan hazıra %.1f sn · demlerken lamba %s\n", rig.hw.dem_on_ms / 1000.0, rig.hw.on_edges,
+           total / 1000.0, led_brewing.c_str());
+    check(rig.has_brew_sense, "bu sürümde algı seçeneği var");
+    check(rig.hw.dem_on_ms >= 429500 && rig.hw.dem_on_ms <= 430500 && rig.hw.on_edges == 1, "işaret yokken eski düzen: röle 430 sn kesintisiz açık");
+    check(total >= 669000 && total <= 672500, "çay 430 + 240 sn sonra hazır (eski düzen)");
+    check(led_brewing == "00111", "eski düzende demlerken lamba kırmızı");
+    check(rig.tazelik.state == "Taze" && rig.violations == 0, "Taze, ihlal yok");
+    return 0;
+  }
+
+  int scenario_cay_anahtar_kapali()
+  {
+    // Algı devresi çalışıyor ama kullanıcı Home Assistant'tan "Su Bitti Algısı"nı kapatmış: eski düzen.
+    Rig rig(true, true, true);
+    rig.hw.present = true;
+    rig.hw.water_s = 600.0f;
+    rig.su_bitti.publish_state(false);
+    Thermal th{60.0f, 0.30f, 0.05f, true};
+    uint32_t t_b = start_tea_until_brewing(rig, th);
+    run_thermal(rig, th, 40 * 60000, nullptr, [&] { return rig.dev.cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA; });
+    uint32_t total = millis() - t_b;
+    printf("  ölçüm: röle toplam açık %.1f sn · açma sayısı %d · başlangıçtan hazıra %.1f sn\n", rig.hw.dem_on_ms / 1000.0, rig.hw.on_edges, total / 1000.0);
+    check(rig.has_brew_sense, "bu sürümde algı seçeneği var");
+    check(rig.hw.dem_on_ms >= 429500 && rig.hw.dem_on_ms <= 430500 && rig.hw.on_edges == 1, "anahtar kapalıyken eski düzen: 430 sn kesintisiz");
+    check(total >= 669000 && total <= 672500 && rig.tazelik.state == "Taze", "670 sn sonra hazır, Taze");
+    return 0;
+  }
+
+  int scenario_cay_kettle_kaldir_demlerken()
+  {
+    // Kettle su aktarımı sırasında (ilk ölçümden hemen önce) kaldırılır: demleme iptal olmamalı, kettle yokken su
+    // aktarılmamalı, geri konunca aktarım sürmeli.
+    Rig rig(true, true, true);
+    rig.hw.present = true;
+    rig.hw.water_s = 120.0f;
+    Thermal th{100.5f, 0.30f, 0.05f, true};
+    uint32_t t_b = start_tea_until_brewing(rig, th);
+    // İlk itişin sonuna 100 ms kala kaldır
+    while (millis() - t_b < 15900)
+    {
+      if ((millis() / STEP_MS) % (SAMPLE_MS / STEP_MS) == 0)
+        rig.feed(100.0f);
+      rig.step();
+    }
+    rig.hw.kettle = false;
+    uint32_t t_lift = millis();
+    // Sıcaklık sensörü kaldırılmayı 1,5 sn sonra görür; o âna kadar eski değer geçerlidir
+    rig.run(1500);
+    std::string mode_before_ntc = rig.aktif_mod.state;
+    rig.hold(-9.16f, 14000);
+    bool koruma = rig.dev.kettle_durumu_ == KORUMA;
+    bool off_while_lifted = rig.relays_off();
+    rig.hw.kettle = true;
+    uint32_t t_put = millis();
+    run_thermal(rig, th, 6000);
+    bool resumed = digitalRead(DEM_RELAY) == HIGH && rig.dev.cay_demleme_durumu_ == DEMLEME_BASLADI;
+    run_thermal(rig, th, 40 * 60000, nullptr, [&] { return rig.dev.cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA || rig.dev.current_mode_ == MODE_KAPALI; });
+    printf("  ölçüm: kaldırıldıktan 1,5 sn sonra mod %s · kaldırılmışken %s, röleler %s · geri konunca %s · röle toplam açık %.1f sn (su 120 sn) · son: %s / %s\n",
+           mode_before_ntc.c_str(), koruma ? "KORUMA" : "?", off_while_lifted ? "kapalı" : "AÇIK", resumed ? "su aktarımı sürüyor" : "SÜRMÜYOR",
+           rig.hw.dem_on_ms / 1000.0, rig.aktif_mod.state.c_str(), rig.tazelik.state.c_str());
+    (void)t_lift;
+    (void)t_put;
+    check(mode_before_ntc == "CAY_DEMLEME", "kettle kaldırıldı: demleme iptal edilmedi");
+    check(koruma && off_while_lifted, "kaldırılmışken KORUMA, röleler kapalı");
+    check(resumed, "geri konunca su aktarımı kaldığı yerden sürdü");
+    check(rig.hw.dem_on_ms >= 159000 && rig.hw.dem_on_ms <= 185000, "suyun tamamı aktarıldı; termostat açınca röle bırakıldı");
+    check(rig.dev.cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA && rig.tazelik.state == "Taze", "çay demlendi (Taze)");
+    check(rig.first_kritik_ms == 0 && rig.violations == 0, "KRITIK yok, ihlal yok");
+    return 0;
+  }
+
+  int scenario_cay_ust_sinir()
+  {
+    // Hatta işaret hiç kesilmiyor (termostat açmıyor ya da giriş başka bir işaret görüyor): pompalama seçilen
+    // seviyenin süresinde (MAX = 430 sn) durmalı; yani hiçbir durumda eski düzenden uzun sürmez.
+    Rig rig(true, true, true);
+    rig.hw.present = true;
+    rig.hw.stuck = true;
+    rig.hw.water_s = 100.0f;
+    Thermal th{100.5f, 0.30f, 0.05f, true};
+    uint32_t t_b = start_tea_until_brewing(rig, th);
+    run_thermal(rig, th, 60 * 60000, nullptr, [&] { return rig.dev.cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA || rig.dev.current_mode_ == MODE_KAPALI; });
+    uint32_t steep = millis() - rig.hw.last_on_edge_ms;
+    printf("  ölçüm: röle toplam açık %.1f sn · son açılıştan hazıra %.1f sn · son: %s / %s\n", rig.hw.dem_on_ms / 1000.0, steep / 1000.0, rig.aktif_mod.state.c_str(),
+           rig.tazelik.state.c_str());
+    check(t_b != 0, "hazırlık: demleme başladı");
+    check(rig.hw.dem_on_ms >= 430000 && rig.hw.dem_on_ms <= 440500, "işaret hiç kesilmese de pompalama üst sınırda (430 sn, en çok bir döngü fazlası) durdu");
+    check(rig.dev.cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA && rig.tazelik.state == "Taze", "sonra normal biçimde demlendi (Taze)");
+    check(steep >= 899000 && steep <= 902500, "son açılıştan 900 sn sonra");
+    check(rig.violations == 0, "ihlal yok");
+    return 0;
+  }
+
+  int scenario_algi_firtina()
+  {
+    // Girişte şebeke işareti olamayacak kadar hızlı kenar var (gürültü): algı kendini kapatmalı, demleme eski düzende yürümeli.
+    Rig rig(true, true, true);
+    rig.hw.present = true;
+    rig.hw.edges_per_s = 50000.0f;
+    rig.hw.water_s = 500.0f;
+    Thermal th{100.5f, 0.30f, 0.05f, true};
+    uint32_t t_b = start_tea_until_brewing(rig, th);
+    bool fault = false, trusted = true;
+#ifdef CAYSEVER_ROBOTEA_SU_BITTI_ALGISI
+    fault = rig.dev.brew_sense_fault_;
+    trusted = rig.dev.brew_sense_trusted_;
+#endif
+    run_thermal(rig, th, 40 * 60000, nullptr, [&] { return rig.dev.cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA; });
+    printf("  ölçüm: arıza bayrağı %d · güven %d · kesme %s · röle toplam açık %.1f sn · açma sayısı %d\n", fault, trusted,
+           hoststub::st().isr[BREW_SENSE] ? "bağlı" : "ayrıldı", rig.hw.dem_on_ms / 1000.0, rig.hw.on_edges);
+    check(t_b != 0 && fault && !trusted, "anlamsız hızdaki işaret algıyı devre dışı bıraktı");
+    check(hoststub::st().isr[BREW_SENSE] == nullptr, "giriş artık dinlenmiyor");
+    check(rig.hw.dem_on_ms >= 429500 && rig.hw.dem_on_ms <= 430500 && rig.hw.on_edges == 1, "demleme eski düzende yürüdü (430 sn)");
+    check(rig.tazelik.state == "Taze" && rig.violations == 0, "Taze, ihlal yok");
+    return 0;
+  }
+
+  int scenario_otomatik_kapanma()
+  {
+    // Fabrika yazılımı modu açıldıktan 2 saat sonra kapatır. Su kaynatma sıcak tutmada bırakılır.
+    const uint32_t two_h = 2 * 60 * 60000;
+    Rig rig(true, true, false, two_h);
+    Thermal th{60.0f, 0.30f, 0.05f, true};
+    rig.hold(60.0f, 4000);
+    rig.su_kaynatma.publish_state(true);
+    uint32_t t0 = millis();
+    run_thermal(rig, th, two_h - 60000);
+    bool on_before = rig.dev.current_mode_ == MODE_SU_KAYNATMA && rig.dev.su_kaynatma_durumu_ == SU_KAYNATMA_SICAKLIK_KORUMA;
+    run_thermal(rig, th, 5 * 60000, nullptr, [&] { return rig.dev.current_mode_ == MODE_KAPALI; });
+    uint32_t t_off = millis() - t0;
+    long on = rig.relay_on_ms;
+    rig.hold(80.0f, 120000);
+    printf("  ölçüm: 1 sa 59 dk'da mod %s · kapanma %.1f dk'da · sonrasında röle %s · anahtar %d · lambalar %s\n", on_before ? "açık" : "KAPALI", t_off / 60000.0,
+           rig.relay_on_ms == on ? "hiç açılmadı" : "AÇILDI", (int)rig.su_kaynatma.state, rig.btn_leds().c_str());
+    check(on_before, "2 saatten önce mod açık ve sıcak tutuyor");
+    check(rig.dev.current_mode_ == MODE_KAPALI && t_off >= two_h && t_off <= two_h + 3000, "mod açıldıktan 2 saat sonra cihaz kendini kapattı");
+    check(rig.relays_off() && rig.relay_on_ms == on && !rig.su_kaynatma.state && rig.btn_leds_all_off(), "röleler kapalı, Home Assistant'ta anahtar kapalı, lambalar sönük");
+    check(rig.violations == 0, "ihlal yok");
+    return 0;
+  }
+
+  int scenario_otomatik_kapanma_yok()
+  {
+    // Seçenek verilmemişse eski davranış: mod süresiz açık kalır.
+    Rig rig;
+    Thermal th{60.0f, 0.30f, 0.05f, true};
+    rig.hold(60.0f, 4000);
+    rig.su_kaynatma.publish_state(true);
+    run_thermal(rig, th, 3 * 60 * 60000);
+    check(rig.dev.current_mode_ == MODE_SU_KAYNATMA, "seçenek yokken 3 saat sonra da mod açık (eski davranış)");
+    check(rig.violations == 0, "ihlal yok");
+    return 0;
+  }
+
   int usage()
   {
     printf("senaryolar: replay-aksam replay-yeniden az-su yarim-litre kuru az-su-sicrama tek-sicrama ardisik-sicrama toparlanma-adimi\n"
            "            nan-kaynatirken nan-acilis kritik-mod-yayini kritik-ha-komutu kritik-kisa-nan kritik-kettle-kaldir asiri-isinma\n"
            "            led-kettle-kaldir led-diger-modlar kaldirilmisken-komut select-yok ota-basliyor acilis-role replay-1eki\n"
-           "            cay-sicak-su-konusma-sureli cay-kettle-kaldir-sureli\n");
+           "            replay-3eki-bos cay-su-bitince cay-bos-hazne cay-algi-yok cay-anahtar-kapali cay-sicak-su-konusma cay-sicak-su-konusma-sureli\n"
+           "            cay-kettle-kaldir-demlerken cay-kettle-kaldir-sureli cay-ust-sinir algi-firtina otomatik-kapanma otomatik-kapanma-yok\n");
     return 2;
   }
 } // namespace
@@ -1027,10 +1460,32 @@ int main(int argc, char **argv)
     scenario_led_diger_modlar();
   else if (s == "kaldirilmisken-komut")
     scenario_kaldirilmisken_komut();
+  else if (s == "cay-su-bitince")
+    scenario_cay_su_bitince();
+  else if (s == "cay-bos-hazne")
+    scenario_cay_bos_hazne();
+  else if (s == "replay-3eki-bos")
+    scenario_replay_3eki_bos();
+  else if (s == "cay-algi-yok")
+    scenario_cay_algi_yok();
+  else if (s == "cay-anahtar-kapali")
+    scenario_cay_anahtar_kapali();
+  else if (s == "cay-sicak-su-konusma")
+    scenario_cay_sicak_su_konusma();
   else if (s == "cay-sicak-su-konusma-sureli")
     scenario_cay_sicak_su_konusma_sureli();
+  else if (s == "cay-kettle-kaldir-demlerken")
+    scenario_cay_kettle_kaldir_demlerken();
+  else if (s == "cay-ust-sinir")
+    scenario_cay_ust_sinir();
   else if (s == "cay-kettle-kaldir-sureli")
     scenario_cay_kettle_kaldir_sureli();
+  else if (s == "algi-firtina")
+    scenario_algi_firtina();
+  else if (s == "otomatik-kapanma")
+    scenario_otomatik_kapanma();
+  else if (s == "otomatik-kapanma-yok")
+    scenario_otomatik_kapanma_yok();
   else if (s == "tarama" && argc >= 5)
     scenario_tarama((float)atof(argv[2]), (uint32_t)atoi(argv[3]), argv[4][0]);
   else

@@ -17,6 +17,8 @@
 #define LOW 0
 #define INPUT 0
 #define OUTPUT 1
+#define CHANGE 3
+#define IRAM_ATTR
 
 namespace hoststub
 {
@@ -26,6 +28,7 @@ namespace hoststub
     int pin_level[48];    // digitalWrite / digitalRead
     bool verbose = false; // true ise ESP_LOGx satırları basılır
     std::function<void()> on_delay; // delay() çağrıldığında (ör. açılıştaki LED yanıp sönmesi) testin bakabilmesi için
+    void (*isr[48])() = {};         // attachInterrupt ile bağlanan kesme işlevleri; testler kenar üretmek için çağırır
     State()
     {
       for (auto &p : pin_level)
@@ -63,6 +66,9 @@ inline void delay(uint32_t ms)
 inline void pinMode(int, int) {}
 inline void digitalWrite(int pin, int level) { hoststub::st().pin_level[pin] = level ? HIGH : LOW; }
 inline int digitalRead(int pin) { return hoststub::st().pin_level[pin]; }
+inline int digitalPinToInterrupt(int pin) { return pin; }
+inline void attachInterrupt(int pin, void (*fn)(), int) { hoststub::st().isr[pin] = fn; }
+inline void detachInterrupt(int pin) { hoststub::st().isr[pin] = nullptr; }
 
 #define ESP_LOGE(tag, ...) hoststub::logf('E', tag, __VA_ARGS__)
 #define ESP_LOGW(tag, ...) hoststub::logf('W', tag, __VA_ARGS__)
