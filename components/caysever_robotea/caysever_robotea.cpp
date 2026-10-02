@@ -2,6 +2,7 @@
 #include "esphome/core/log.h"
 #include <WiFi.h>
 #include <algorithm>
+#include <cmath>
 
 namespace esphome
 {
@@ -90,7 +91,9 @@ namespace esphome
             {
                 float temperature = this->ntc_sensor_->state;
 
-                if (temperature < 0.0f) // Anormal sıcaklık değeri
+                // NaN: ölçüm yok (açılışta ilk okuma öncesi / sensör hatası). Tüm karşılaştırmalar false
+                // döndüğü için aşağıdaki mod işleyicileri röleyi açabilir; koruma moduna al.
+                if (std::isnan(temperature) || temperature < 0.0f) // Anormal sıcaklık değeri
                 {
                     if (this->kettle_durumu_ != KORUMA)
                     {
@@ -1751,7 +1754,7 @@ namespace esphome
                 this->reset_all_operations(false);
                 if (this->current_mode_ != new_mode)
                 {
-                    if (this->cay_demleme_select_->current_option() != "KAPALI")
+                    if (this->cay_demleme_select_ != nullptr && this->cay_demleme_select_->current_option() != "KAPALI")
                         this->cay_demleme_select_->publish_state("KAPALI");
 
                     publish_demleme_switch(false);
