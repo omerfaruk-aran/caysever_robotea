@@ -1,0 +1,73 @@
+# Bilgisayarda (host) sınama düzeneği
+
+Bileşenin **gerçek kodu** (`components/caysever_robotea/caysever_robotea.cpp`) değiştirilmeden bilgisayarda derlenir;
+ESP32'nin pinleri, saati ve ESPHome'un sensör/anahtar/seçici sınıfları `stubs/` altında taklit edilir. Amaç: ısıtıcı
+süren bir cihaza yazılım yüklemeden önce davranışı, özellikle güvenlik yollarını (sensör kaybı, kritik durum, röleler),
+enerjili cihaza müdahale etmeden kanıtlamak.
+
+```sh
+cd tests/host
+./run.sh                    # bütün senaryolar
+./run.sh replay-aksam -v    # tek senaryo; -v bileşenin kendi kayıt (ESP_LOGx) satırlarını da basar
+SRC=<dizin> ./run.sh        # başka bir kaynakla (ör. eski sürümle karşılaştırma)
+./run.sh tarama             # 168 temiz ısınma durumunda karar tablosu (iki sürümün çıktısı diff'lenir)
+```
+
+Gereken: bir C++20 derleyicisi (`c++`). Her senaryo ayrı süreçte çalışır, çünkü bileşende fonksiyon içi `static`
+değişkenler var. Her döngü adımından sonra şu değişmez denetlenir: **kettle durumu NORMAL değilken iki röle de kapalı.**
+
+## Dosyalar
+
+| Dosya | Ne |
+|---|---|
+| `stubs/` | Arduino (`millis`, `digitalWrite`…) ve ESPHome (`Component::set_timeout`, `Sensor`, `Switch`, `Select`, `TextSensor`, `WiFi.onEvent`) taklidi. `Switch::publish_state` gerçekteki gibi aynı değerin tekrarını yutar; `Select` yutmaz |
+| `test_main.cpp` | senaryolar |
+| `data/*.csv` | gerçek bir cihazın Home Assistant geçmişi (sıcaklık okumaları, kullanıcının işlemleri, cihazın yayınladığı durumlar); `tools/fixture_olustur.py` üretir |
+
+## Düzeneğin doğruluğu
+
+2 Eki 2026 akşamının verisi (`data/2026-10-02-aksam.csv`), o gün cihazda çalışan kodla (`main` `3e5ac26` + tazelik
+sensörleri) oynatıldığında gerçek cihazın yaptığı **birebir** yeniden üretildi: yanlış KRITIK alarmı aynı saniyede
+(21:50:26), aynı eğimle (1.728 °C/sn) ve o akşamın 33 durum geçişinin 33'ü aynı anda.
+
+## Sonuçlar
+
+"Önce" = `main` (`3e5ac26`) + tazelik sensörleri. "Sonra" = bu daldaki kod.
+
+| Senaryo | Önce | Sonra |
+|---|---|---|
+| `replay-aksam` — 2 Eki 17:45–21:52 gerçek veri | yanlış KRITIK @ 21:50:26 | KRITIK yok; 33/33 geçiş aynı |
+| `replay-yeniden` — 2 Eki 21:54–23:30 (Taze → 60 dk → Bayat) | 12/12 | 12/12 |
+| `replay-1eki` — 1 Eki 22:34–23:19 (soğuk sudan kaynatma) | 17/17 | 17/17 |
+| `az-su` — 2.26 °C/sn (koddaki 0.1 L ölçümü) | KRITIK 7.0 sn | KRITIK 7.0 sn |
+| `kuru` — 6 °C/sn | KRITIK 7.0 sn | KRITIK 7.0 sn |
+| `yarim-litre` — 1.41 °C/sn | alarm yok | alarm yok |
+| `az-su-sicrama` — az su + aynı anda bozuk okuma | KRITIK 7.0 sn | KRITIK 14.0 sn (bir pencere gecikme, 56.6 °C) |
+| `tek-sicrama` / `ardisik-sicrama` / `toparlanma-adimi` — bozuk okuma desenleri | yanlış KRITIK | alarm yok, çay Taze kalıyor |
+| `nan-kaynatirken`, `nan-acilis` — ölçüm kaybı (#4'te istenen senaryolar) | geçti | geçti |
+| `select-yok` — yaml'da `cay_demleme` yok (#4'te istenen senaryo) | geçti | geçti |
+| `kritik-mod-yayini` — çay modunda KRITIK | HA'da mod CAY_DEMLEME / MAX kalıyor | hepsi KAPALI |
+| `kritik-ha-komutu` — KRITIK'te HA'dan mod başlatma | kabul ediliyor (durum yazısı değişiyor) | reddediliyor, anahtar kapalıya dönüyor |
+| `kritik-kisa-nan` — KRITIK'te 2 sn ölçüm kaybı | KRITIK'e dönüyor ama alarm sesi kesiliyor | KRITIK ve alarm sesi sürüyor |
+| `kritik-kettle-kaldir` — KRITIK'te kettle 6 sn kaldırılıp konuyor | yine KRITIK | NORMAL, cihaz boşta |
+| `asiri-isinma` — su kontrolü kapalı, 120 °C | KRITIK; mod açık kalıyor, sessiz; onaydan sonra **ısıtma kendiliğinden sürüyor** | KRITIK; mod kapalı, alarm sesli; onaydan sonra röle açılmıyor |
+| `led-kettle-kaldir`, `led-diger-modlar` — kettle kaldırılınca lambalar | mod lambası yanık, Bay yanıp sönüyor | hepsi sönük; geri konunca eski hâl |
+| `kaldirilmisken-komut` — kettle yokken HA'dan başlatma | lamba yanıyor | lamba sönük; konunca yanıp başlıyor |
+| `ota-basliyor` — yaml `ota: on_begin` içinden yapılan çağrılar | geçti | geçti |
+| `acilis-role` — açılışta röle pinleri | LED beklemesi sırasında sürülmüyor | en başta LOW |
+| `cay-sicak-su-konusma-sureli` — su kaynamışken çay tuşu | konuşma 960. ms'de başlıyor, 2060. ms'de seviye bip'i kesiyor | bip 2060. ms, konuşma 2660. ms; sonraki 6 sn'de başka ses yok |
+| `cay-kettle-kaldir-sureli` — demlerken kettle 20 sn kaldırılıp konuyor | demleme rölesi bir daha çekilmiyor (toplam 62 sn), 432. sn'de "çay demlendi" | röle yeniden çekiliyor (toplam 410 sn), 670. sn'de hazır |
+| **Toplam** | **10 / 25** | **25 / 25** |
+
+**Tarama** (`./run.sh tarama`): 14 ısınma hızı (1.0–6.0 °C/sn) × 4 örnekleme fazı × 3 profil (doğrusal, hızlanan,
+±0.3 °C gürültülü) = 168 temiz ısınma durumu. Karar ve alarm anı iki sürümde **168/168 aynı** (144'ünde alarm). Yani
+eğim doğrulaması temiz veride hiçbir alarmı susturmuyor ya da geciktirmiyor.
+
+Taramanın gösterdiği, bu değişiklikle ilgisi olmayan mevcut bir özellik: uç-nokta eğimi okumanın 2 sn'lik örnekleme
+fazına göre gerçek hızın ~5/7–9/7 katı çıkabiliyor; 1.5 °C/sn doğrusal ısınma da (eşik 1.65) bazı fazlarda alarm
+veriyor. Eşiğe dokunulmadı.
+
+## Düzeneğin kapsamadığı
+
+Donanımın kendisi: rölenin gerçekten bırakması, sensör devresinin elektriksel davranışı, ESP32'nin açılıştaki pin
+durumları, ses çipi, Wi-Fi olayları. Bunlar yalnız cihazda görülür.

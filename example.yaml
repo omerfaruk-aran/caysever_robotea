@@ -26,6 +26,13 @@ api:
 ota:
   - platform: esphome
     password: "ota_password" # !!!DEĞİŞTİR!!!
+    # Güncelleme sırasında ana döngü durur; o sırada röle açık kalırsa sıcaklık denetlenmez. Güncelleme başlar
+    # başlamaz ısıtma, demleme ve aktif mod kapatılır.
+    on_begin:
+      then:
+        - lambda: |-
+            id(caysever).set_mode(caysever_robotea::MODE_KAPALI, 0);
+            id(caysever).reset_all_operations(true);
 
 # WiFi parolasını girin!
 wifi:
