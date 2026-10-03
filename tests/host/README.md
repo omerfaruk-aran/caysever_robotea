@@ -73,10 +73,10 @@ duyuldu). O cihazdaki sürüm "su yok" kararını bir sonraki sıcaklık okumas�
 
 | Senaryo | Önce | Sonra |
 |---|---|---|
-| `cay-su-bitince` — üst haznede 200 sn'lik su | röle 430 sn açık (230 sn'si kuruda), 11,2 dk'da "demlendi" | 16 sn kesintisiz, sonra 10 sn açık + 0,24 sn ölçüm; röle su bitip termostat açınca bırakılıyor (246 sn); son çekilişten 900 sn sonra "demlendi"; lamba kaynayınca beyaz |
+| `cay-su-bitince` — üst haznede 200 sn'lik su | röle 430 sn açık (230 sn'si kuruda), 11,2 dk'da "demlendi" | 16 sn kesintisiz, sonra 10 sn açık + 0,24 sn ölçüm; röle su bitip termostat açınca bırakılıyor (246 sn); son çekilişten 900 sn sonra "demlendi"; lamba demlerken kırmızı, "demlendi"de beyaz |
 | `cay-bos-hazne` — üst hazne boş | demleme rölesi 430 sn açık, sonra "demlendi" | 47 sn'de anlaşılıyor; "çay demlendi" sesi, sıcak tutma, Taze; mod 2 saatte kapanıyor |
 | `replay-3eki-bos` — gerçek cihaz kaydı | — | yukarıdaki doğruluk ölçümü |
-| `cay-sicak-su-konusma` — su kaynamışken çay tuşu (algılı düzen) | — | konuşma kesilmiyor, lamba beyaz |
+| `cay-sicak-su-konusma` — su kaynamışken çay tuşu (algılı düzen) | — | konuşma kesilmiyor, lamba kırmızı |
 | `cay-kettle-kaldir-demlerken` — kettle su aktarımı sırasında kaldırılıyor | — | demleme iptal olmuyor, kettle yokken su aktarılmıyor, geri konunca sürüyor |
 | `cay-ust-sinir` — hatta işaret hiç kesilmiyor | — | pompalama seçilen seviyenin süresinde (430 sn + en çok bir döngü) duruyor |
 | `cay-algi-yok` — girişte hiç işaret yok | — | süreli düzen birebir (430 + 240 sn, lamba kırmızı) |
@@ -86,8 +86,34 @@ duyuldu). O cihazdaki sürüm "su yok" kararını bir sonraki sıcaklık okumas�
 | `otomatik-kapanma-yok` — seçenek verilmemiş | 3 saat sonra da açık | aynı |
 | **Toplam (bütün senaryolar)** | **24 / 36** | **36 / 36** |
 
+### "Su yok" sabit sınırı (106 → 115 °C)
+
+| Senaryo | Önce (106 °C) | Sonra (115 °C) |
+|---|---|---|
+| `replay-3eki-kaynatma` — gerçek cihaz kaydı: ~1 L soğuk su, kaynarken taban okuması 106,4 °C'yi görüyor | "su yok" KRITIK'i 13:33:20'de (cihazla aynı saniye) | alarm yok; 13:33:30'da sıcak tutma ve "su kaynadı" |
+| `kuru-sicak-tutmada` — sıcak tutmada kettle kuru (6 °C/sn) | 106,5 °C okumasında kesiyor | 118,5 °C okumasında kesiyor (bir okuma, 2 sn sonra) |
+| `az-su`, `kuru` — eğim kontrolü | 7.0 sn | 7.0 sn (değişmedi; tarama 168/168 aynı) |
+| **Toplam (bütün senaryolar)** | **37 / 38** | **38 / 38** |
+
+### Ses tetiği ve çay lambasının sırası
+
+"Önce" = yukarıdaki "sonra". Gerçek bir cihazda kaynatma bitiminde "su kaynadı" tetiği verildiği hâlde ses çipi
+konuşmadı (tetik 10 ms'lik, ısıtıcı rölesinin bırakıldığı anda); fabrika yazılımı tetiği 50 ms tutuyor. Çay lambası
+fabrika yazılımında tuşa basılınca kırmızı yanar, demleme bitince beyaza döner.
+
+| Senaryo | Önce | Sonra |
+|---|---|---|
+| `ses-tetik-suresi` — kaynatma biter, "su kaynadı" tetiği | 20 ms (10 ms'lik zamanlayıcı, düzeneğin adımı 20 ms) | 60 ms (50 ms'lik zamanlayıcı); `ses_dene()` yedi deseni de veriyor |
+| `cay-lamba-sirasi` — çay tuşuna bir kez basılır, çay demlenir | tuş bırakıldıktan 1,66 sn sonra kırmızı; sıra: beyaz → sönük → kırmızı → (kaynayınca) beyaz; iki bip | 20 ms sonra kırmızı; "demlendi"ye kadar hep kırmızı, sonra beyaz; tek bip |
+| `cay-lamba-seviye` — üç basış (2/4), sonra Home Assistant'tan MAX | üç beyaz yanıp sönme, sonra kırmızı; MAX'ta da bir beyaz yanıp sönme ve iki bip | üç beyaz yanıp sönme + onay bip'i duruyor; MAX'ta yanıp sönme yok, tek bip |
+| `cay-ha-sicak-su` — su kaynamışken Home Assistant'tan MAX | bip, 0,5 sn sonra ikinci bip, 0,6 sn sonra konuşma | bip, 0,6 sn sonra konuşma |
+| `cay-fazla-basis` — beş basış | mod başlamıyor | mod başlamıyor, ilk basışta yanan lamba sönüyor |
+| `kritik-bekleyen-basis` — çay tuşuna basıldıktan sonraki 1 sn içinde KRITIK | alarm onaylanınca çay modu **kendiliğinden başlıyor**, ısıtıcı açılıyor | basış unutuluyor; onaydan sonra cihaz boşta |
+| `cay-su-bitince`, `cay-sicak-su-konusma` — algılı düzende lamba | kaynayınca beyaz | demlerken kırmızı |
+| **Toplam (bütün senaryolar)** | **36 / 44** | **44 / 44** |
+
 `SRC=<eski sürüm> ./run.sh` ile eski sürümler de derlenebilir: bu sürümdeki seçenekler `CAYSEVER_ROBOTEA_SU_BITTI_ALGISI`
-işaretiyle korunur.
+ve `CAYSEVER_ROBOTEA_SES_DENEME` işaretleriyle korunur.
 
 **Tarama** (`./run.sh tarama`): 14 ısınma hızı (1.0–6.0 °C/sn) × 4 örnekleme fazı × 3 profil (doğrusal, hızlanan,
 ±0.3 °C gürültülü) = 168 temiz ısınma durumu. Karar ve alarm anı iki sürümde **168/168 aynı** (144'ünde alarm). Yani

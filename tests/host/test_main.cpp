@@ -156,6 +156,8 @@ namespace
     bool has_brew_sense = false;                             // bu derlemede "su bitti" algısı var ve istenmiş
     std::vector<std::pair<uint32_t, std::string>> sounds;    // ses çipine giden tetikler: (an, pinler)
     std::string last_sound_pat;
+    std::vector<uint32_t> sound_ms;                          // her tetiğin pinlerde kaldığı süre (sounds ile aynı sırada)
+    std::vector<std::pair<uint32_t, std::string>> led_log;   // tuş lambalarının her değişimi: (an, desen)
     select::Select cay;
     text_sensor::TextSensor aktif_mod, mod_durumu, kettle_durumu, tazelik;
 
@@ -220,8 +222,18 @@ namespace
           if (digitalRead(sp_pin) == HIGH)
             pat += (pat.empty() ? "" : "+") + std::to_string(sp_pin);
         if (!pat.empty() && pat != last_sound_pat)
+        {
           sounds.emplace_back(millis(), pat);
+          sound_ms.push_back(0);
+        }
+        if (!pat.empty())
+          sound_ms.back() += ms;
         last_sound_pat = pat;
+      }
+      {
+        std::string l = btn_leds();
+        if (led_log.empty() || led_log.back().second != l)
+          led_log.emplace_back(millis(), l);
       }
       if (digitalRead(RELAY) == HIGH)
         relay_on_ms += ms;
@@ -1027,9 +1039,14 @@ namespace
       seq += " " + std::to_string((int)(rig.sounds[i].first - t_press)) + "ms:" + rig.sounds[i].second;
     printf("  ölçüm (%s): sesler (tuş bırakıldıktan sonra)%s · konuşmadan sonraki 6 sn'de başka ses %d · lamba %s · durum %s\n", duzen, seq.c_str(),
            after_speech, rig.btn_leds().c_str(), rig.mod_durumu.state.c_str());
+    uint32_t t_last_beep = 0;
+    for (size_t i = before; i < rig.sounds.size(); i++)
+      if (rig.sounds[i].second == "4+32" && rig.sounds[i].first < t_speech)
+        t_last_beep = rig.sounds[i].first;
     check(t_speech != 0, "demleme başlangıç konuşması çaldı");
     check(after_speech == 0, "konuşmayı izleyen 6 sn içinde başka ses tetiklenmedi (konuşma kesilmiyor)");
-    check(before_speech >= 1, "seviye bildirimi bip'i konuşmadan önce çaldı");
+    check(before_speech == 1, "tek basışta tek bip (fabrikadaki gibi), konuşmadan önce");
+    check(t_last_beep != 0 && t_speech - t_last_beep >= 600, "bip ile konuşma arasında en az 0,6 sn var");
     check(rig.dev.cay_demleme_durumu_ == DEMLEME_BASLADI && digitalRead(DEM_RELAY) == HIGH, "demleme başladı, demleme rölesi açık");
     check(rig.btn_leds() == beklenen_lamba, lamba_aciklamasi);
     check(rig.violations == 0, "ihlal yok");
@@ -1073,7 +1090,7 @@ namespace
     Rig rig(true, true, true);
     rig.hw.present = true;
     rig.hw.water_s = 300.0f;
-    return konusma_kesilmiyor(rig, "algılı", "11000", "lamba beyaz (fabrika düzeni)");
+    return konusma_kesilmiyor(rig, "algılı", "00111", "demlerken lamba kırmızı");
   }
 
   int scenario_cay_su_bitince()
@@ -1112,8 +1129,9 @@ namespace
     check(rig.hw.dem_dry_ms <= 51500, "ısıtıcı kuruda yalnız termostatı açana kadar çalıştı (eski düzende 230 sn çalışırdı)");
     check(rig.hw.max_gap_ms <= 300, "pompalama sırasında ölçüm için bırakma 0,3 sn'yi geçmedi");
     check(steep >= 899000 && steep <= 902500, "çay, son röle açılışından 900 sn sonra hazır");
-    check(led_brewing == "11000", "su kaynayınca çay lambası beyaz (fabrikadaki gibi)");
+    check(led_brewing == "00111", "demlerken çay lambası kırmızı");
     check(rig.dev.cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA && rig.tazelik.state == "Taze" && digitalRead(DEM_LED) == HIGH, "sonunda sıcak tutma, Taze, Dem lambası yanık");
+    check(rig.btn_leds() == "11000", "çay hazır olunca çay lambası beyaz");
     check(rig.first_kritik_ms == 0 && rig.violations == 0, "KRITIK yok, ihlal yok");
     return 0;
   }
@@ -1392,13 +1410,353 @@ namespace
     return 0;
   }
 
+  // ---------------------------------------------------------------------------------------------
+  // "Su yok" sabit sıcaklık sınırı: su varken kaynama aşımında yanlış alarm vermemeli, kuru kettle'ı yine kesmeli
+  // ---------------------------------------------------------------------------------------------
+  int scenario_replay_3eki_kaynatma()
+  {
+    // 3 Eki 2026 13:29 → 13:33: ~1 L soğuk su kaynatıldı. Okuma 70 sn boyunca 97-98,8 °C'de kaldı (su kaynıyordu),
+    // 100 °C'yi görünce başlayan "steam boost" taban okumasını 106,4 °C'ye çıkardı. Cihazdaki kod 13:33:20'de
+    // "su yok" diye KRITIK'e geçti; su vardı.
+    const int base = 13 * 3600 + 29 * 60;
+    Rig rig;
+    auto rows = load_csv("data/2026-10-03-kaynatma-106.csv");
+    size_t i = 0;
+    float max_t = 0;
+    uint32_t end = rows.back().t_ms + 1500;
+    while (millis() < end)
+    {
+      while (i < rows.size() && rows[i].t_ms <= millis())
+      {
+        const Row &r = rows[i++];
+        if (r.type == "T" || r.type == "t")
+        {
+          rig.feed(std::stof(r.value));
+          max_t = std::max(max_t, std::stof(r.value));
+        }
+        else if (r.type == "CMD" && r.value == "su_kaynatma=on")
+          rig.su_kaynatma.publish_state(true);
+      }
+      rig.step();
+    }
+    uint32_t t_koruma = 0;
+    for (auto &c : rig.mod_durumu.changes)
+      if (c.second == "SICAKLIK_KORUMA")
+        t_koruma = c.first;
+    int kaynadi_sesi = 0;
+    for (auto &snd : rig.sounds)
+      if (snd.second == "32")
+        kaynadi_sesi++;
+    printf("  ölçüm: en yüksek okuma %.1f °C · KRITIK %s (cihazda 13:33:20) · \"su kaynadı\" %s · konuşma %d kez · ısıtıcı rölesi sonda %s · ihlal %ld\n", max_t,
+           rig.first_kritik_ms ? ("@ " + hms(rig.first_kritik_ms, base)).c_str() : "yok", t_koruma ? ("@ " + hms(t_koruma, base)).c_str() : "yok", kaynadi_sesi,
+           digitalRead(RELAY) == HIGH ? "açık" : "kapalı", rig.violations);
+    check(rig.first_kritik_ms == 0, "su varken kaynama aşımı (106,4 °C) yanlış \"su yok\" alarmı vermedi");
+    check(t_koruma != 0 && kaynadi_sesi == 1, "kaynatma tamamlandı: sıcak tutmaya geçildi ve \"su kaynadı\" denildi");
+    check(rig.violations == 0, "ihlal yok");
+    return 0;
+  }
+
+  int scenario_kuru_sicak_tutmada()
+  {
+    // Sıcak tutmadayken kettle'da su kalmıyor (ör. boşaltılıp boş geri kondu). 98 °C'nin üstünde eğim kontrolü
+    // çalışmaz; kesmeyi sabit sıcaklık sınırı yapar. Kuru ısınma 6 °C/sn, okuma 2 sn'de bir.
+    Rig rig;
+    Thermal th{60.0f, 0.30f, 0.05f, true};
+    rig.hold(60.0f, 4000);
+    rig.su_kaynatma.publish_state(true);
+    run_thermal(rig, th, 10 * 60000, nullptr, [&] { return rig.dev.su_kaynatma_durumu_ == SU_KAYNATMA_SICAKLIK_KORUMA; });
+    run_thermal(rig, th, 40000); // kaynama sonrası 30 sn'lik bekleme geçsin
+    bool keepwarm = rig.dev.su_kaynatma_durumu_ == SU_KAYNATMA_SICAKLIK_KORUMA && rig.first_kritik_ms == 0;
+    // Su artık yok: röle açılınca hızla ısınır, kapalıyken yavaş soğur
+    Thermal dry{th.t, 6.0f, 0.5f, false};
+    float max_fed = 0;
+    float t_at_kritik = 0;
+    run_thermal(rig, dry, 5 * 60000, [&](int, float v) {
+      max_fed = std::max(max_fed, v);
+      return v;
+    }, [&] {
+      if (rig.first_kritik_ms != 0 && t_at_kritik == 0)
+        t_at_kritik = max_fed;
+      return rig.first_kritik_ms != 0;
+    });
+    rig.hold(dry.t, 4000);
+    printf("  ölçüm: KRITIK %s · kesildiği andaki okuma %.1f °C · aktif_mod %s · alarm sesi %s\n", rig.first_kritik_ms ? "var" : "YOK", t_at_kritik,
+           rig.aktif_mod.state.c_str(), rig.dev.kritik_sound_active_ ? "etkin" : "kapalı");
+    check(keepwarm, "hazırlık: su kaynadı, sıcak tutmada, alarm yok");
+    check(rig.first_kritik_ms != 0, "kuru kettle sıcak tutmada KRITIK'e geçiriyor");
+    check(t_at_kritik < 128.0f, "kesme, sınırı geçen ilk okumada gerçekleşti (115 °C + bir okuma aralığı)");
+    check(rig.relays_off() && rig.aktif_mod.state == "KAPALI" && rig.dev.kritik_sound_active_, "röleler ve mod kapalı, alarm sesli");
+    check(rig.violations == 0, "ihlal yok");
+    return 0;
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Çay lambasının sırası (fabrikadaki gibi): basınca kırmızı, kaynatırken ve demlerken kırmızı, "çay hazır"da beyaz
+  // ---------------------------------------------------------------------------------------------
+  const char *const KIRMIZI = "00111", *const BEYAZ = "11000", *const SONUK = "00000";
+
+  // led_log'un [from, to) aralığındaki desenleri "kırmızı beyaz sönük ..." diye yazar
+  std::string lamba_sirasi(const Rig &rig, uint32_t from, uint32_t to = 0xFFFFFFFF)
+  {
+    std::string s;
+    for (auto &e : rig.led_log)
+      if (e.first >= from && e.first < to)
+        s += std::string(s.empty() ? "" : " → ") + (e.second == KIRMIZI ? "kırmızı" : e.second == BEYAZ ? "beyaz" : e.second == SONUK ? "sönük" : e.second.c_str());
+    return s;
+  }
+  int lamba_sayisi(const Rig &rig, const char *desen, uint32_t from, uint32_t to = 0xFFFFFFFF)
+  {
+    int n = 0;
+    for (auto &e : rig.led_log)
+      if (e.first >= from && e.first < to && e.second == desen)
+        n++;
+    return n;
+  }
+
+  int scenario_cay_lamba_sirasi()
+  {
+    // Soğuk su, üst haznede 60 sn'lik su; çay tuşuna cihazdan bir kez basılır.
+    Rig rig(true, true, true);
+    rig.hw.present = true;
+    rig.hw.water_s = 60.0f;
+    Thermal th{60.0f, 0.30f, 0.05f, true};
+    rig.hold(th.t, 4000);
+    hoststub::st().pin_level[TOUCH[3]] = LOW;
+    rig.run(200);
+    hoststub::st().pin_level[TOUCH[3]] = HIGH;
+    uint32_t t_rel = millis();
+    run_thermal(rig, th, 40 * 60000, nullptr, [&] { return rig.dev.cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA; });
+    uint32_t t_done = millis();
+    for (auto it = rig.mod_durumu.changes.rbegin(); it != rig.mod_durumu.changes.rend(); ++it)
+      if (it->second == "SICAKLIK_KORUMA")
+      {
+        t_done = it->first;
+        break;
+      }
+    uint32_t t_red = 0;
+    for (auto &e : rig.led_log)
+      if (e.first >= t_rel && e.second == KIRMIZI)
+      {
+        t_red = e.first;
+        break;
+      }
+    bool brewed = false;
+    for (auto &c : rig.mod_durumu.changes)
+      if (c.second == "DEMLEME_BASLADI")
+        brewed = true;
+    printf("  ölçüm: tuş bırakıldıktan %u ms sonra kırmızı · hazır olana kadar sıra: %s · hazır olunca: %s · Dem lambası %d\n", t_red ? t_red - t_rel : 99999,
+           lamba_sirasi(rig, t_rel, t_done).c_str(), lamba_sirasi(rig, t_done).c_str(), digitalRead(DEM_LED));
+    check(brewed && rig.dev.cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA, "hazırlık: su kaynadı, demlendi, çay hazır");
+    check(t_red != 0 && t_red - t_rel <= 100, "tuşa basılır basılmaz lamba kırmızı (mod başlamasını beklemeden)");
+    check(lamba_sayisi(rig, BEYAZ, t_rel, t_done) == 0 && lamba_sayisi(rig, SONUK, t_rel, t_done) == 0,
+          "kaynatma ve demleme boyunca lamba hep kırmızı: beyaz yanıp sönme yok");
+    check(rig.btn_leds() == BEYAZ && digitalRead(DEM_LED) == HIGH, "\"çay hazır\"da lamba beyaza döndü, Dem lambası yandı");
+    int bip = 0;
+    for (auto &snd : rig.sounds)
+      if (snd.second == "4+32" && snd.first >= t_rel - 300)
+        bip++;
+    printf("         tuşa basıştan çay hazıra kadar bip: %d\n", bip);
+    check(bip == 1, "tek basışta tek bip (fabrikadaki gibi)");
+    check(rig.first_kritik_ms == 0 && rig.violations == 0, "KRITIK yok, ihlal yok");
+    return 0;
+  }
+
+  int scenario_cay_lamba_seviye()
+  {
+    // Üç basış (2/4): seviye bildirimi korunur (üç beyaz yanıp sönme), sonra kırmızı. HA'dan MAX: yanıp sönme yok.
+    Rig rig(true, true, true);
+    rig.hw.present = true;
+    rig.hw.water_s = 60.0f;
+    Thermal th{60.0f, 0.30f, 0.05f, true};
+    rig.hold(th.t, 4000);
+    uint32_t t0 = millis();
+    for (int k = 0; k < 3; k++)
+      rig.press(3, 150);
+    run_thermal(rig, th, 10000);
+    int beyaz = lamba_sayisi(rig, BEYAZ, t0);
+    std::string sira = lamba_sirasi(rig, t0);
+    std::string secim = rig.cay.current_option();
+    bool red_now = rig.btn_leds() == KIRMIZI;
+    // modu kapat, HA'dan MAX başlat
+    uint32_t t_off = millis();
+    rig.cay.publish_state("KAPALI");
+    run_thermal(rig, th, 4000);
+    uint32_t t1 = millis();
+    rig.cay.publish_state("MAX");
+    run_thermal(rig, th, 10000);
+    auto bip_say = [&](uint32_t from, uint32_t to) {
+      int n = 0;
+      for (auto &snd : rig.sounds)
+        if (snd.second == "4+32" && snd.first >= from && snd.first < to)
+          n++;
+      return n;
+    };
+    int bip3 = bip_say(t0, t_off), bip_ha = bip_say(t1, millis());
+    printf("  ölçüm: üç basış → seçim %s, sıra: %s, bip %d · HA'dan MAX → sıra: %s, bip %d\n", secim.c_str(), sira.c_str(), bip3,
+           lamba_sirasi(rig, t1).c_str(), bip_ha);
+    check(secim == "2/4" && beyaz == 3 && red_now, "üç basışta seviye üç beyaz yanıp sönmeyle gösterildi, sonra lamba kırmızı");
+    check(bip3 == 4, "üç basışta üç tuş bip'i + bir onay bip'i (seviye bildirimi duruyor)");
+    check(lamba_sayisi(rig, BEYAZ, t1) == 0 && rig.btn_leds() == KIRMIZI, "HA'dan MAX: beyaz yanıp sönme yok, lamba kırmızı");
+    check(bip_ha == 1, "HA'dan MAX: tek bip");
+    check(rig.violations == 0, "ihlal yok");
+    return 0;
+  }
+
+  int scenario_cay_ha_sicak_su()
+  {
+    // Su zaten kaynamışken çay Home Assistant'tan başlatılır: komutun bip'i ile "çayı demlemeye başlıyorum" konuşması
+    // üst üste binmemeli (demleme hemen başlayabildiği için aradaki tek şey bırakılan nefes payı).
+    Rig rig;
+    rig.hold(100.5f, 4000);
+    size_t before = rig.sounds.size();
+    uint32_t t0 = millis();
+    rig.cay.publish_state("MAX");
+    rig.hold(100.5f, 10000);
+    std::string seq;
+    uint32_t t_beep = 0, t_speech = 0;
+    bool full = true;
+    for (size_t i = before; i < rig.sounds.size(); i++)
+    {
+      seq += " " + std::to_string((int)(rig.sounds[i].first - t0)) + "ms:" + rig.sounds[i].second;
+      if (rig.sounds[i].second == "4+32" && t_beep == 0)
+        t_beep = rig.sounds[i].first;
+      if (rig.sounds[i].second == "4" && t_speech == 0)
+        t_speech = rig.sounds[i].first;
+      // Komutun bip'i adımın dışında başlar: ilk adımı sayılmaz, 60 ms'lik tetik 40 ms ölçülür
+      seq += "(" + std::to_string(rig.sound_ms[i]) + "ms)";
+      if (rig.sound_ms[i] < 40)
+        full = false;
+    }
+    printf("  ölçüm: sesler (komuttan sonra)%s · durum %s · lamba %s\n", seq.c_str(), rig.mod_durumu.state.c_str(), rig.btn_leds().c_str());
+    check(rig.sounds.size() - before == 2 && t_beep != 0 && t_speech != 0, "bir bip, bir konuşma; başka ses yok");
+    // Bip komut anında (adımın başında) verilir ama adımın sonunda kaydedilir: ölçümde bir adımlık (20 ms) pay var
+    check(t_speech + STEP_MS >= t_beep + 600 && full, "konuşma bip'ten en az 0,6 sn sonra, iki tetik de tam süre tutuldu");
+    check(rig.dev.cay_demleme_durumu_ == DEMLEME_BASLADI && rig.btn_leds() == KIRMIZI, "demleme başladı, lamba kırmızı");
+    check(rig.violations == 0, "ihlal yok");
+    return 0;
+  }
+
+  int scenario_cay_fazla_basis()
+  {
+    // Beş basış dikkate alınmaz: mod başlamaz, ilk basışta yakılan kırmızı lamba söner.
+    Rig rig;
+    rig.hold(60.0f, 4000);
+    for (int k = 0; k < 5; k++)
+      rig.press(3, 100);
+    rig.hold(60.0f, 6000);
+    printf("  ölçüm: aktif_mod %s · lamba %s · röleler %s\n", rig.aktif_mod.state.c_str(), rig.btn_leds().c_str(), rig.relays_off() ? "kapalı" : "AÇIK");
+    check(rig.dev.current_mode_ == MODE_KAPALI && rig.relays_off(), "beş basışta mod başlamadı");
+    check(rig.btn_leds_all_off(), "lamba sönük kaldı");
+    return 0;
+  }
+
+  int scenario_kritik_bekleyen_basis()
+  {
+    // Çay tuşuna basıldı, mod daha başlamadan (1 sn'lik basış sayma süresi içinde) KRITIK'e girildi. Alarm onaylandıktan
+    // sonra o eski basış çay modunu kendiliğinden başlatmamalı.
+    Rig rig;
+    rig.hold(90.0f, 4000);
+    rig.su_kaynatma.publish_state(true);
+    rig.hold(90.0f, 4000);
+    hoststub::st().pin_level[TOUCH[3]] = LOW;
+    rig.run(200);
+    hoststub::st().pin_level[TOUCH[3]] = HIGH;
+    rig.run(40);
+    rig.feed(125.0f); // aşırı ısınma okuması: bir sonraki döngüde KRITIK
+    rig.run(200);
+    bool kritik = rig.dev.kettle_durumu_ == KRITIK;
+    rig.hold(125.0f, 4000);
+    rig.hold(-9.16f, 6000); // kettle kaldırıldı (onay)
+    rig.hold(80.0f, 2000);  // geri kondu
+    bool normal = rig.dev.kettle_durumu_ == NORMAL;
+    long on = rig.relay_on_ms;
+    rig.hold(80.0f, 30000);
+    printf("  ölçüm: basıştan sonra %s · onaydan sonra %s · aktif_mod %s · 30 sn'de ısıtıcı %s · lamba %s\n", kritik ? "KRITIK" : "KRITIK DEĞİL",
+           rig.kettle_durumu.state.c_str(), rig.aktif_mod.state.c_str(), rig.relay_on_ms == on ? "açılmadı" : "AÇILDI", rig.btn_leds().c_str());
+    check(kritik && normal, "hazırlık: basıştan hemen sonra KRITIK, kettle kaldır-koy ile NORMAL");
+    check(rig.dev.current_mode_ == MODE_KAPALI && rig.aktif_mod.state == "KAPALI", "alarmdan önceki basış çay modunu başlatmadı");
+    check(rig.relay_on_ms == on && rig.relays_off(), "onaydan sonra 30 sn: röle açılmadı");
+    check(rig.btn_leds_all_off() && rig.violations == 0, "lambalar sönük, ihlal yok");
+    return 0;
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Ses çipi tetiği
+  // ---------------------------------------------------------------------------------------------
+  int scenario_ses_tetik_suresi()
+  {
+    // Kaynatma biter: "su kaynadı" tetiği (yalnız 3. ses pini) ısıtıcı rölesinin bırakıldığı anda verilir.
+    // Tetik fabrikadaki gibi en az 50 ms tutulmalı.
+    Rig rig;
+    Thermal th{60.0f, 0.30f, 0.05f, true};
+    rig.hold(th.t, 4000);
+    rig.su_kaynatma.publish_state(true);
+    run_thermal(rig, th, 10 * 60000, nullptr, [&] { return rig.dev.su_kaynatma_durumu_ == SU_KAYNATMA_SICAKLIK_KORUMA; });
+    run_thermal(rig, th, 2000);
+    int n = 0;
+    uint32_t dur = 0;
+    uint32_t min_all = 99999, max_all = 0;
+    for (size_t i = 0; i < rig.sounds.size(); i++)
+    {
+      if (rig.sounds[i].second == "32")
+      {
+        n++;
+        dur = rig.sound_ms[i];
+      }
+      min_all = std::min(min_all, rig.sound_ms[i]);
+      max_all = std::max(max_all, rig.sound_ms[i]);
+    }
+    bool pins_low = digitalRead(4) == LOW && digitalRead(19) == LOW && digitalRead(32) == LOW;
+    printf("  ölçüm: \"su kaynadı\" tetiği %d kez, %u ms tutuldu (düzeneğin adımı %u ms) · sonra pinler %s\n", n, dur, STEP_MS, pins_low ? "LOW" : "HIGH KALDI");
+    check(rig.dev.su_kaynatma_durumu_ == SU_KAYNATMA_SICAKLIK_KORUMA && n == 1, "kaynatma bitti, \"su kaynadı\" bir kez tetiklendi");
+    check(dur >= 50 && dur <= 80, "tetik en az 50 ms tutuldu (fabrika değeri)");
+    check(pins_low, "tetikten sonra ses pinleri bırakıldı");
+#ifdef CAYSEVER_ROBOTEA_SES_DENEME
+    // Tanılama çağrısı: ses anahtarları kapalıyken de her deseni verir
+    rig.buton_sesi.publish_state(false);
+    rig.konusma_sesi.publish_state(false);
+    const char *beklenen[8] = {"", "4", "19", "4+19", "32", "4+32", "19+32", "4+19+32"};
+    int dogru = 0;
+    for (int mask = 1; mask <= 7; mask++)
+    {
+      // Tetik döngünün dışında verilir; süre çağrı anından pinlerin bırakıldığı döngüye kadar ölçülür
+      uint32_t t_call = millis(), t_low = 0;
+      rig.dev.ses_dene((uint8_t)mask);
+      std::string seen;
+      for (int k = 0; k < 20 && t_low == 0; k++)
+      {
+        rig.step();
+        std::string pat;
+        for (int sp_pin : SOUND)
+          if (digitalRead(sp_pin) == HIGH)
+            pat += (pat.empty() ? "" : "+") + std::to_string(sp_pin);
+        if (pat.empty())
+          t_low = millis();
+        else
+          seen = pat;
+      }
+      if (seen == beklenen[mask] && t_low - t_call >= 50 && t_low - t_call <= 80)
+        dogru++;
+      else
+        printf("         maske %d: desen %s, %u ms\n", mask, seen.c_str(), t_low - t_call);
+      rig.hold(99.0f, 2000);
+    }
+    printf("         ses denemesi: 7 desenden %d'i doğru pinlerle ve ≥ 50 ms verildi (ses anahtarları kapalıyken)\n", dogru);
+    check(dogru == 7, "ses denemesi yedi deseni de veriyor");
+#endif
+    check(rig.violations == 0, "ihlal yok");
+    return 0;
+  }
+
   int usage()
   {
     printf("senaryolar: replay-aksam replay-yeniden az-su yarim-litre kuru az-su-sicrama tek-sicrama ardisik-sicrama toparlanma-adimi\n"
            "            nan-kaynatirken nan-acilis kritik-mod-yayini kritik-ha-komutu kritik-kisa-nan kritik-kettle-kaldir asiri-isinma\n"
            "            led-kettle-kaldir led-diger-modlar kaldirilmisken-komut select-yok ota-basliyor acilis-role replay-1eki\n"
            "            replay-3eki-bos cay-su-bitince cay-bos-hazne cay-algi-yok cay-anahtar-kapali cay-sicak-su-konusma cay-sicak-su-konusma-sureli\n"
-           "            cay-kettle-kaldir-demlerken cay-kettle-kaldir-sureli cay-ust-sinir algi-firtina otomatik-kapanma otomatik-kapanma-yok\n");
+           "            cay-kettle-kaldir-demlerken cay-kettle-kaldir-sureli cay-ust-sinir algi-firtina otomatik-kapanma otomatik-kapanma-yok\n"
+           "            replay-3eki-kaynatma kuru-sicak-tutmada cay-lamba-sirasi cay-lamba-seviye cay-fazla-basis\n"
+           "            cay-ha-sicak-su kritik-bekleyen-basis ses-tetik-suresi\n");
     return 2;
   }
 } // namespace
@@ -1486,6 +1844,22 @@ int main(int argc, char **argv)
     scenario_otomatik_kapanma();
   else if (s == "otomatik-kapanma-yok")
     scenario_otomatik_kapanma_yok();
+  else if (s == "cay-lamba-sirasi")
+    scenario_cay_lamba_sirasi();
+  else if (s == "cay-lamba-seviye")
+    scenario_cay_lamba_seviye();
+  else if (s == "cay-fazla-basis")
+    scenario_cay_fazla_basis();
+  else if (s == "cay-ha-sicak-su")
+    scenario_cay_ha_sicak_su();
+  else if (s == "kritik-bekleyen-basis")
+    scenario_kritik_bekleyen_basis();
+  else if (s == "ses-tetik-suresi")
+    scenario_ses_tetik_suresi();
+  else if (s == "replay-3eki-kaynatma")
+    scenario_replay_3eki_kaynatma();
+  else if (s == "kuru-sicak-tutmada")
+    scenario_kuru_sicak_tutmada();
   else if (s == "tarama" && argc >= 5)
     scenario_tarama((float)atof(argv[2]), (uint32_t)atoi(argv[3]), argv[4][0]);
   else
