@@ -13,6 +13,7 @@
 
 // Bu sürümde demlemede "su bitti" algısı ve kendiliğinden kapanma var (sınama programı buna bakar).
 #define CAYSEVER_ROBOTEA_SU_BITTI_ALGISI 1
+#define CAYSEVER_ROBOTEA_SES_DENEME 1
 
 namespace esphome
 {
@@ -89,6 +90,10 @@ namespace esphome
       void handle_global_state_reset();
       void reset_all_operations(bool global_reset);
       void visual_feedback_demleme_level(int level); // Görsel geri bildirim
+
+      // Tanılama: ses çipini doğrudan tetikler; "Buton Sesi" / "Konuşma Sesi" anahtarlarına bakmaz.
+      // mask: bit0 = 1. ses pini (GPIO4), bit1 = 2. ses pini (GPIO19), bit2 = 3. ses pini (GPIO32).
+      void ses_dene(uint8_t mask);
 
       void setup() override;
       void loop() override;
@@ -331,6 +336,10 @@ namespace esphome
       void set_demleme_suresi_for_level_(int level);
 
       uint32_t sound_pulse_token_{0};
+      // Ses çipinin tetik darbesi. Fabrika yazılımı pinleri 50 ms tutuyor. 10 ms'lik darbeyle bir cihazda
+      // kaynatma bitimindeki "su kaynadı" tetiği verildiği hâlde çip konuşmadı (tetik, ısıtıcı rölesinin
+      // bırakıldığı ana denk geliyor); süre fabrika değerine çekildi.
+      static constexpr uint32_t SOUND_PULSE_MS = 50;
 
       void on_su_kaynatma_change(bool state)
       {

@@ -1002,6 +1002,15 @@ namespace esphome
             }
         }
 
+        void CayseverRobotea::ses_dene(uint8_t mask)
+        {
+            ESP_LOGI("CayseverRobotea", "Ses denemesi: maske %u", mask);
+            this->activate_sound(std::map<int, bool>{
+                {this->sound_pins_[0], (mask & 0x01) != 0},
+                {this->sound_pins_[1], (mask & 0x02) != 0},
+                {this->sound_pins_[2], (mask & 0x04) != 0}});
+        }
+
         void CayseverRobotea::activate_sound(const std::map<int, bool> &pin_states)
         {
             // Pinleri set et
@@ -1011,7 +1020,7 @@ namespace esphome
             }
 
             uint32_t token = ++this->sound_pulse_token_;
-            this->set_timeout("sound_off", 10, [this, token]()
+            this->set_timeout("sound_off", SOUND_PULSE_MS, [this, token]()
                               {
         // Aynı timeout ismi ile overwrite olacağı için genelde gerek yok ama güvenli kalsın
         if (token != this->sound_pulse_token_) return;
