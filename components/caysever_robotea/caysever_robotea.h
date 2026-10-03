@@ -180,6 +180,7 @@ namespace esphome
       static constexpr uint32_t STEAM_BOOST_MS = 20 * 1000; // 20sn (0-60 arası güvenli)
       static constexpr float STEAM_BOOST_MAX_T = 103.0f;    // taban sıcaklığı tavanı (çok önemli)
       static constexpr float OVERHEAT_CUTOFF_T = 120.0f;    // fail-safe (bu mutlaka olmalı)
+      static constexpr float WL_STATIC_LIMIT_T = 115.0f;    // "su yok" sabit sınırı (fabrika yazılımındaki değer)
       bool steam_boost_enabled_{false};                     // bu kaynatmada boost var mı?
       static constexpr float STEAM_BOOST_START_T = 80.0f;   // başlarken NTC < 80 ise boost aktif
 

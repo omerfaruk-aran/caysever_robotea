@@ -1760,9 +1760,11 @@ namespace esphome
             // --- 3. SU YOK ANALİZİ ---
             bool water_low_detected = false;
 
-            // A) Statik Limit: 106 derece kesinlikle susuzluktur.
-            // (103.5 su varken overshoot ile görülebildiği için yükselttik)
-            if (temperature >= 106.0f)
+            // A) Statik limit: taban bu sıcaklığı görüyorsa su yoktur.
+            // Su varken de aşım görülebiliyor: kaynama sonrası 103.5 °C, soğuktan kaynatmadaki "steam boost" sırasında
+            // 106.4 °C ölçüldü (gerçek cihaz, ~1 L su; eski 106 °C sınırı yanlış alarm verdi). Sınır fabrika yazılımının
+            // kullandığı değere çekildi; kuru kettle saniyede birkaç derece ısındığı için kesme en çok bir okuma gecikir.
+            if (temperature >= WL_STATIC_LIMIT_T)
             {
                 ESP_LOGE("CayseverRobotea", "KRİTİK SICAKLIK: %.2f°C - Rezistans aşırı ısındı!", temperature);
                 water_low_detected = true;
