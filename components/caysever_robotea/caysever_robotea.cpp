@@ -464,14 +464,13 @@ namespace esphome
                 break;
 
             case MODE_CAY_DEMLEME:
-                if (this->cay_demleme_durumu_ == DEMLEME_HAZIRLIK ||
-                    (this->cay_demleme_durumu_ == DEMLEME_BASLADI && this->brew_phase_ == BREW_TIMED))
+                // Fabrikadaki gibi: kaynatırken ve demlerken kırmızı, çay hazır olunca (sıcak tutma) beyaz
+                if (this->cay_demleme_durumu_ == DEMLEME_HAZIRLIK || this->cay_demleme_durumu_ == DEMLEME_BASLADI)
                 {
                     this->control_led(3, false);
                 }
-                else if (this->cay_demleme_durumu_ == DEMLEME_BASLADI || this->cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA)
+                else if (this->cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA)
                 {
-                    // Algılı düzende lamba fabrikadaki gibi: ısıtırken kırmızı, su kaynayınca beyaz
                     this->control_led(3, true);
                 }
                 break;
@@ -509,13 +508,17 @@ namespace esphome
         }
         void CayseverRobotea::handle_touch_input_brew_tea()
         {
-            if (kettle_durumu_ == KRITIK)
-            {
-                return;
-            }
             static unsigned long touch_start_time = 0;  // Tuş basılma başlangıç zamanı
             static unsigned long last_release_time = 0; // Son bırakma zamanı
             static int press_count = 0;                 // Bas çek sayacı
+
+            if (kettle_durumu_ == KRITIK)
+            {
+                // Alarmdan hemen önce yapılmış, henüz işlenmemiş basış unutulur; yoksa alarm onaylanınca
+                // çay modu kendiliğinden başlardı.
+                press_count = 0;
+                return;
+            }
 
             // Dokunmatik pinin durumu
             bool touch_value = digitalRead(this->touch_pins_[3]) == LOW;
@@ -553,6 +556,11 @@ namespace esphome
                     // Dokunma işlemi algılandı
                     press_count++;
                     last_release_time = this->current_time_;
+                    // Fabrikadaki gibi: tuşa basılır basılmaz lamba kırmızı (mod 1 sn'lik basış sayma süresi dolunca başlar)
+                    if (press_count == 1 && this->kettle_durumu_ == NORMAL)
+                    {
+                        this->control_led(3);
+                    }
                     ESP_LOGI("CayseverRobotea", "Çay Demleme bırakıldı (KAPALI). Bas çek sayısı: %d", press_count);
                 }
             }
@@ -565,6 +573,10 @@ namespace esphome
                     // 4'ten fazla basılma durumunda dikkate alma
                     ESP_LOGW("CayseverRobotea", "Çay Demleme için maksimum 4 dokunma dikkate alınabilir. Dokunma sayısı sıfırlandı.");
                     press_count = 0;
+                    if (this->kettle_durumu_ == NORMAL)
+                    {
+                        this->restore_mode_leds_(); // ilk basışta yakılan kırmızı geri alınır
+                    }
                 }
                 else
                 {
@@ -664,6 +676,17 @@ namespace esphome
             if (level > 4)
                 level = 4;
 
+            if (level == 1)
+            {
+                // Tek basış (MAX) fabrikadaki gibi: seviye bildirimi yok. Lamba kırmızı kalır, ikinci bir bip çalmaz
+                // (tuşun ya da Home Assistant komutunun bip'i zaten çaldı). Su zaten kaynamışsa demleme konuşması
+                // o bip'in üstüne binmesin diye aynı nefes payı bırakılır.
+                this->demleme_fb_.active = false;
+                this->demleme_fb_end_ms_ = this->current_time_;
+                return;
+            }
+
+            // 3/4, 2/4, 1/4 seçimlerinde seviye beyaz yanıp sönmeyle gösterilir, ardından onay bip'i çalar.
             this->demleme_fb_.active = true;
             this->demleme_fb_.level = level;
             this->demleme_fb_.blink_done = 0;
@@ -1309,7 +1332,7 @@ namespace esphome
                         this->brew_pump_ms_ = 0;
                         this->brew_cycle_started_ = false;
                         this->brew_set_relay_(true);
-                        this->control_led(3, true); // su kaynadı: lamba beyaz
+                        this->control_led(3); // demleme sürerken lamba kırmızı; "çay hazır"da beyaza döner
                         ESP_LOGI("CayseverRobotea", "Demleme: su bitti algısıyla yürütülüyor (üst sınır %u sn).", this->demleme_suresi_);
                     }
                     else
@@ -2285,6 +2308,9 @@ namespace esphome
 
                 // Süreyi burada ayarla (artık feedback fonksiyonu süre set etmiyor)
                 this->set_demleme_suresi_for_level_(level);
+
+                // Mod başlar başlamaz lamba kırmızı (ısıtma); seviye bildirimi bunun üstüne yürür
+                this->control_led(3);
 
                 // Non-blocking görsel feedback başlat
                 this->visual_feedback_demleme_level(level);
