@@ -123,8 +123,29 @@ fabrika yazılımında tuşa basılınca kırmızı yanar, demleme bitince beyaz
 | `cay-az-su` — üst haznede 30 sn'lik su | — | aktarım ilk dakikayı aşıyor: demlenme bekleniyor, "çay demlendi", Taze |
 | **Toplam (bütün senaryolar)** | **44 / 45** | **45 / 45** |
 
-`SRC=<eski sürüm> ./run.sh` ile eski sürümler de derlenebilir: bu sürümdeki seçenekler `CAYSEVER_ROBOTEA_SU_BITTI_ALGISI`
-ve `CAYSEVER_ROBOTEA_SES_DENEME` işaretleriyle korunur.
+### Mama suyu: sıcak suyla başlamaz, 40 °C'yi "vur, bekle, ölç" ile tutturur
+
+"Önce" = yukarıdaki "sonra". Eski hâlinde mama suyu sıcaklığa bakmadan başlıyordu: gerçek bir cihazda su 100 °C'yken
+tuşa basılınca doğrudan "mama suyu hazır" dendi. Ayrıca okumaya bakarak kesmek, sensör ısıtıcının gerisinden geldiği
+için suyu taşırıyor.
+
+**Isıl modelin doğruluğu:** `ThermalLag` gerçek cihaz ölçümlerine göre kuruldu (8 sn ölü zaman, vuruştan ~15 sn sonra
+tepe, ~40 sn'de oturma; ~0,65 L için vuruş saniyesi başına 0,7 °C). Fabrika tablosunu röleyle uygulayan ara sürüm bu
+modelde 32 °C'den 1,0 dk'da, 9 sn'lik en uzun vuruşla "hazır" deyip suyu 44,7 °C'de bırakıyor; aynı sürüm cihazda
+32 °C'den 70 sn'de "hazır" dedi ve su 44–45 °C'de kaldı.
+
+| Senaryo | Önce | Sonra |
+|---|---|---|
+| `mama-sicak-su` — su 100 °C, mama suyu Home Assistant'tan ve tuştan | mod başlıyor, "mama suyu hazır" | mod başlamıyor: üç uyarı bip'i, mama lambası üç kez yanıp sönüyor, anahtar kapalıya dönüyor; 44 °C'de başlıyor |
+| `mama-kaldirilmisken-sicak` — mod kettle yokken başlatılıyor, kettle 90 °C suyla konuyor | "mama suyu hazır" | mod kapanıyor, üç bip, ısıtıcı hiç açılmıyor |
+| `mama-ilik` — su 43 °C | hemen "hazır" | ısıtmıyor; okuma 41,5 °C'nin altına inince "hazır" |
+| `mama-40` — 20 °C, ~0,65 L | okuma 40 °C'yi görünce 0,5 dk'da "hazır"; su 35,6 °C'de (okuma, ısıtıcı açıkken sudan önce yükseliyor); sıcak tutma 30–35 °C | 4 vuruş, 3,2 dk'da "hazır", su 38,9 °C, en yüksek 40,0 °C; sıcak tutmada 38 °C'nin altına inmiyor; hazırdan 1 saat sonra mod kapanıyor (`mama_suyu_sicak_tutma`) |
+| `mama-yeniden` — hazırken okuma 34 °C'ye düşüyor | sıcak tutma bandı içinde sayılıyor | baştan ısıtılıyor, lamba kırmızı; hazır olunca ikinci anons |
+| `./run.sh mama-tarama` — 6 su miktarı (~0,15–1,5 L) × 5 başlangıç sıcaklığı | — | 30 durumun hepsinde hazırdan 1 dk sonra su 38,4–40,6 °C, en yüksek 40,7 °C; hazır olma 0,8–7,7 dk |
+| **Toplam (bütün senaryolar)** | **45 / 50** | **50 / 50** |
+
+`SRC=<eski sürüm> ./run.sh` ile eski sürümler de derlenebilir: bu sürümdeki seçenekler `CAYSEVER_ROBOTEA_SU_BITTI_ALGISI`,
+`CAYSEVER_ROBOTEA_SES_DENEME` ve `CAYSEVER_ROBOTEA_MAMA_FABRIKA` işaretleriyle korunur.
 
 **Tarama** (`./run.sh tarama`): 14 ısınma hızı (1.0–6.0 °C/sn) × 4 örnekleme fazı × 3 profil (doğrusal, hızlanan,
 ±0.3 °C gürültülü) = 168 temiz ısınma durumu. Karar ve alarm anı iki sürümde **168/168 aynı** (144'ünde alarm). Yani

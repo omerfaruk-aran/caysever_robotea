@@ -82,6 +82,8 @@ caysever_robotea:
     name: "Demleme Hattı"
   # Mod açıldıktan bu süre sonra cihaz kendini kapatır (fabrikada 2 saat). Verilmezse kapanmaz.
   otomatik_kapanma: 2h
+  # Mama suyu "hazır" olduktan sonra modun açık kalacağı süre (verilmezse yalnız otomatik_kapanma geçerli)
+  mama_suyu_sicak_tutma: 1h
 
 switch:
   - platform: template

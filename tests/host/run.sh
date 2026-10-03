@@ -4,6 +4,7 @@
 #   SRC=<dizin> ./run.sh          → başka bir kaynak (ör. karşılaştırma için eski sürüm)
 #   ./run.sh <senaryo> [-v]       → tek senaryo, -v ile bileşenin kendi kayıt satırları
 #   ./run.sh tarama               → yalnız "temiz ısınmada karar" taraması (satır satır; iki sürümün çıktısı diff'lenir)
+#   ./run.sh mama-tarama          → mama suyu: su miktarı × başlangıç sıcaklığı taraması
 # Her senaryo ayrı süreçte çalışır (bileşende fonksiyon içi static değişkenler var).
 set -u
 cd "$(dirname "$0")"
@@ -28,6 +29,20 @@ tarama() {
   done
 }
 
+mama_tarama() {
+  # mama suyu: 6 su miktarı (kazanç) × 5 başlangıç sıcaklığı = 30 durum
+  for gain in 0.30 0.45 0.70 1.00 1.60 3.00; do
+    for start in 12 20 28 34 38; do
+      "$OUT" mama-40 "$gain" "$start" | grep "mama-tarama"
+    done
+  done
+}
+
+if [ $# -ge 1 ] && [ "$1" = "mama-tarama" ]; then
+  mama_tarama
+  exit 0
+fi
+
 if [ $# -ge 1 ] && [ "$1" = "tarama" ]; then
   tarama
   exit 0
@@ -43,7 +58,7 @@ nan-kaynatirken nan-acilis kritik-mod-yayini kritik-ha-komutu kritik-kisa-nan kr
 led-kettle-kaldir led-diger-modlar kaldirilmisken-komut select-yok ota-basliyor acilis-role \
 replay-3eki-bos cay-su-bitince cay-bos-hazne cay-algi-yok cay-anahtar-kapali cay-sicak-su-konusma cay-sicak-su-konusma-sureli \
 cay-kettle-kaldir-demlerken cay-kettle-kaldir-sureli cay-ust-sinir algi-firtina otomatik-kapanma otomatik-kapanma-yok \
-replay-3eki-kaynatma kuru-sicak-tutmada cay-lamba-sirasi cay-lamba-seviye cay-fazla-basis cay-ha-sicak-su kritik-bekleyen-basis ses-tetik-suresi cay-az-su"
+replay-3eki-kaynatma kuru-sicak-tutmada cay-lamba-sirasi cay-lamba-seviye cay-fazla-basis cay-ha-sicak-su kritik-bekleyen-basis ses-tetik-suresi cay-az-su mama-sicak-su mama-40 mama-ilik mama-yeniden mama-kaldirilmisken-sicak"
 fail=0
 passed=0
 for s in $ALL; do

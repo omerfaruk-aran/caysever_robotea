@@ -79,6 +79,29 @@ Filtre kahve (tuş 2) aynı düzenektir; farkları: başlangıç konuşması ses
 tazelik **40 dk**. Su kaynatma (tuş 3): kaynayınca ses 4; 85 °C'ye düşünce yeniden kaynatır; 2 saatte kapanır. Mama
 suyu (tuş 1): su 44 °C'den sıcaksa başlamaz (lamba yanıp söner, "hata 3"); hazır olunca ses 8.
 
+
+### Mama suyu (tuş 1)
+
+Sıcaklıklar fabrikanın kendi ölçeğinde; parantez içindekiler `example.yaml`'daki değerlerle bileşenin okuması (§2).
+Fabrika ısıtıcı işlevine verilen değer, diğer denetimlerde de kullanılan tam sayı sensör okumasıdır; sensör kettle
+tabanındadır. Tuşun üstünde 40 yazar; fabrika yazılımıyla suyun 45 okumasında kaç derecede kaldığı ölçülmedi.
+
+| Adım | Fabrika |
+|---|---|
+| Başlatma | su > 44 °C (45,6) ise başlamaz: mama lambası yanıp söner, "hata 3". Kettle yerinde değilse tuş yok sayılır |
+| Isıtma | röle yalnız 25 °C'ye (26,4) kadar; sonra GPIO16 vuruşları, 25 sn'lik çevrimde: ≤ 30 °C → 12 sn, ≤ 35 → 9, < 38 → 8, < 42 → 5, üstü 4 sn |
+| Hazır | okuma ≥ 45 °C (46,6): lamba değişir, ses 8 |
+| Sıcak tutma | okuma ≤ 38 °C (39,6) olunca vuruşla ısıtır. ≤ 35 °C'ye (36,5) düşerse baştan ısıtır, 45'e çıkınca yeniden ses 8 |
+| Kapanış | 2 saat |
+
+**Bileşen bu tabloyu kullanmaz.** Aynı tablo ısıtıcı rölesiyle (GPIO17) uygulanıp gerçek bir cihazda denendi: okuma
+46,6 °C'de "hazır" denildiğinde su 44–45 °C'deydi (32 °C'den başlayınca), 42 °C'den başlayınca okuma 52 °C'ye çıktı.
+Sensör ısıtıcının 15–20 sn gerisinden geliyor ve vuruştan sonra suyun üstüne taşıp ~40 sn'de oturuyor; röleyle tam
+güçte bu tablo suyu hedefin üstüne taşıyor. Fabrikada GPIO16 yolunun aynı gücü verip vermediği bilinmiyor (ölçülemedi).
+Bileşen bu yüzden tuşun üstünde yazan 40 °C'yi doğrudan hedefler: kısa vuruş, 40 sn bekleme, ölçüm; "hazır" yalnız
+oturmuş okuma 39–41,5 °C arasındayken. Fabrikadan alınanlar: sıcak suyla başlamama ve hazırken yeniden ısıtma.
+Kapanış için `mama_suyu_sicak_tutma` ile hazırdan sonraki süre ayrıca sınırlanabilir.
+
 ## 4. Demleme denetimi
 
 ```

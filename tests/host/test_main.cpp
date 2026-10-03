@@ -164,6 +164,8 @@ namespace
     long steps = 0;
     long violations = 0;         // "NORMAL değilken röle açık" sayısı (her döngü sonunda bakılır)
     uint32_t relay_on_ms = 0;    // ısıtıcı rölesinin toplam açık kaldığı süre
+    std::vector<uint32_t> relay_runs; // ısıtıcı rölesinin her kesintisiz açık kalışı (ms)
+    int last_relay = LOW;
     uint32_t dem_relay_on_ms = 0; // demleme rölesinin toplam açık kaldığı süre
     int dem_relay_on_count = 0;  // demleme rölesinin kaç kez çekildiği
     int last_dem_relay = LOW;
@@ -235,8 +237,17 @@ namespace
         if (led_log.empty() || led_log.back().second != l)
           led_log.emplace_back(millis(), l);
       }
-      if (digitalRead(RELAY) == HIGH)
-        relay_on_ms += ms;
+      {
+        int rl = digitalRead(RELAY);
+        if (rl == HIGH)
+        {
+          relay_on_ms += ms;
+          if (last_relay == LOW)
+            relay_runs.push_back(0);
+          relay_runs.back() += ms;
+        }
+        last_relay = rl;
+      }
       {
         int dr = digitalRead(DEM_RELAY);
         if (dr == HIGH)
@@ -328,6 +339,53 @@ namespace
         v = glitch(i, v);
       rig.feed(v);
       for (uint32_t s = 0; s < SAMPLE_MS; s += STEP_MS)
+      {
+        rig.step();
+        th.advance(digitalRead(RELAY) == HIGH, STEP_MS / 1000.0f);
+      }
+      if (stop && stop())
+        return;
+    }
+  }
+
+  // Gecikmeli ısıl model (mama suyu için). Gerçek cihazda ölçülen davranış: ısıtıcı açıldıktan ~8 sn sonra okuma
+  // yükselmeye başlar, vuruş bittikten ~15 sn sonra tepe yapar, suyun kendisinden birkaç derece yukarı taşar ve
+  // ~40 sn'de suya oturur. gain = ısıtıcının bir saniyesinin suyu kaç derece ısıttığı (su miktarına bağlı:
+  // ~0,65 L için 0,7; 1 L için 0,45; 0,3 L için 1,6).
+  struct ThermalLag
+  {
+    float tw;            // suyun sıcaklığı
+    float gain;          // °C / ısıtıcı saniyesi
+    float cool = 0.004f; // °C/sn
+    float x = 0;         // yoldaki ısı (suya henüz geçmemiş), °C karşılığı
+    std::vector<char> hat;
+    size_t idx = 0;
+    float max_tw = 0;
+
+    float sensor() const { return tw + 2.0f * x; }
+    void advance(bool relay_on, float dt_s)
+    {
+      const size_t n = (size_t)(8.0f / dt_s);
+      if (hat.size() != n)
+        hat.assign(n, 0);
+      const bool u = hat[idx] != 0;
+      hat[idx] = relay_on ? 1 : 0;
+      idx = (idx + 1) % n;
+      if (u)
+        x += gain * dt_s;
+      const float akis = x / 15.0f * dt_s;
+      x -= akis;
+      tw += akis - cool * dt_s;
+      max_tw = std::max(max_tw, tw);
+    }
+  };
+
+  void run_lag(Rig &rig, ThermalLag &th, uint32_t ms, const std::function<bool()> &stop = nullptr)
+  {
+    for (uint32_t el = 0; el < ms; el += SAMPLE_MS)
+    {
+      rig.feed(th.sensor());
+      for (uint32_t st = 0; st < SAMPLE_MS; st += STEP_MS)
       {
         rig.step();
         th.advance(digitalRead(RELAY) == HIGH, STEP_MS / 1000.0f);
@@ -955,16 +1013,16 @@ namespace
     bool back1 = rig.btn_leds() == boil && digitalRead(RELAY) == HIGH && rig.dev.su_kaynatma_durumu_ == SU_KAYNATMA_HAZIRLIK;
     rig.su_kaynatma.publish_state(false);
     rig.hold(th.t, 4000);
-    // mama suyu: 40 °C'ye ısıt, hazır (beyaz) olsun
+    // mama suyu: ısıt, hazır (beyaz) olsun
     th.t = 30.0f;
     rig.hold(30.0f, 4000);
     rig.mama_suyu.publish_state(true);
-    run_thermal(rig, th, 120000, nullptr, [&] { return rig.dev.mama_suyu_durumu_ == MAMA_SUYU_SICAKLIK_KORUMA; });
-    rig.hold(36.0f, 4000);
+    run_thermal(rig, th, 600000, nullptr, [&] { return rig.dev.mama_suyu_durumu_ == MAMA_SUYU_SICAKLIK_KORUMA; });
+    rig.hold(42.0f, 4000);
     std::string mama = rig.btn_leds();
     rig.hold(-9.16f, 6000);
     bool dark2 = rig.btn_leds_all_off() && rig.relays_off();
-    rig.hold(36.0f, 4000);
+    rig.hold(42.0f, 4000);
     bool back2 = rig.btn_leds() == mama && rig.dev.mama_suyu_durumu_ == MAMA_SUYU_SICAKLIK_KORUMA;
     printf("  ölçüm: kaynatma lambası %s → kaldırılınca %s → geri %s · mama lambası %s → kaldırılınca %s → geri %s\n", boil.c_str(),
            dark1 ? "sönük" : "YANIK", back1 ? "aynı" : "FARKLI", mama.c_str(), dark2 ? "sönük" : "YANIK", back2 ? "aynı" : "FARKLI");
@@ -1775,6 +1833,200 @@ namespace
     return 0;
   }
 
+  // ---------------------------------------------------------------------------------------------
+  // Mama suyu: fabrika yazılımındaki düzen
+  // ---------------------------------------------------------------------------------------------
+  const char *const MAMA_KIRMIZI = "10000", *const MAMA_BEYAZ = "01111", *const MAMA_HAZIR_SESI = "4+19+32";
+
+  int ses_sayisi(const Rig &rig, const char *desen, size_t from = 0)
+  {
+    int n = 0;
+    for (size_t i = from; i < rig.sounds.size(); i++)
+      if (rig.sounds[i].second == desen)
+        n++;
+    return n;
+  }
+
+  int scenario_mama_sicak_su()
+  {
+    // Su 100 °C'yken mama suyu istenir (gerçek cihazda iki kez görüldü: eski kod hemen "mama suyu hazır" diyordu).
+    // Beklenen: mod başlamaz, üç uyarı bip'i, mama lambası üç kez yanıp söner, Home Assistant anahtarı kapalıya döner.
+    Rig rig;
+    rig.hold(100.0f, 4000);
+    size_t s0 = rig.sounds.size();
+    uint32_t t0 = millis();
+    rig.mama_suyu.publish_state(true); // Home Assistant'tan
+    rig.hold(100.0f, 6000);
+    bool ha_red = rig.dev.current_mode_ == MODE_KAPALI && !rig.mama_suyu.state && rig.relays_off();
+    int bip_ha = ses_sayisi(rig, "4+32", s0), hazir_ha = ses_sayisi(rig, MAMA_HAZIR_SESI, s0);
+    int kirmizi = 0;
+    for (auto &e : rig.led_log)
+      if (e.first >= t0 && e.second == MAMA_KIRMIZI)
+        kirmizi++;
+    bool dark = rig.btn_leds_all_off();
+    size_t s1 = rig.sounds.size();
+    rig.press(0); // cihazdaki tuştan
+    rig.hold(100.0f, 6000);
+    bool tus_red = rig.dev.current_mode_ == MODE_KAPALI && !rig.mama_suyu.state && rig.relays_off();
+    int bip_tus = ses_sayisi(rig, "4+32", s1), hazir_tus = ses_sayisi(rig, MAMA_HAZIR_SESI, s1);
+    // 44 °C'de (sınırın altında) başlamalı
+    rig.hold(44.0f, 4000);
+    rig.mama_suyu.publish_state(true);
+    rig.hold(44.0f, 2000);
+    bool baslar = rig.dev.current_mode_ == MODE_MAMA_SUYU;
+    printf("  ölçüm: HA'dan → mod %s, bip %d, \"mama suyu hazır\" %d, mama lambası %d kez yanıp söndü · tuştan → mod %s, bip %d, \"hazır\" %d · 44 °C'de %s\n",
+           ha_red ? "başlamadı" : "BAŞLADI", bip_ha, hazir_ha, kirmizi, tus_red ? "başlamadı" : "BAŞLADI", bip_tus, hazir_tus, baslar ? "başlıyor" : "BAŞLAMIYOR");
+    check(ha_red && tus_red, "100 °C'de mama suyu başlamadı (HA'dan ve tuştan); anahtar kapalı, röleler kapalı");
+    check(hazir_ha == 0 && hazir_tus == 0, "\"mama suyu hazır\" denmedi");
+    check(bip_ha == 4 && bip_tus == 4, "komutun/tuşun bip'i + üç uyarı bip'i");
+    check(kirmizi == 3 && dark, "mama lambası üç kez yanıp söndü, sonra sönük");
+    check(rig.relay_on_ms == 0 || baslar, "reddedilirken ısıtıcı hiç açılmadı");
+    check(baslar, "sınırın altında (44 °C) mod başlıyor");
+    check(rig.first_kritik_ms == 0 && rig.violations == 0, "KRITIK yok, ihlal yok");
+    return 0;
+  }
+
+  // Mama suyu 40 °C: su miktarı (gain) ve başlangıç sıcaklığı ne olursa olsun "hazır" denildiğinde su 40 °C civarında
+  // olmalı, hiçbir anda belirgin biçimde aşmamalı. satir=true ise yalnız tek satır yazar (tarama için).
+  int scenario_mama_40(float gain, float start, bool satir)
+  {
+    Rig rig;
+#ifdef CAYSEVER_ROBOTEA_MAMA_FABRIKA
+    rig.dev.set_mama_suyu_sicak_tutma(60 * 60000);
+#endif
+    ThermalLag th{start, gain};
+    for (int i = 0; i < 20; i++)
+      th.advance(false, 0.5f); // model otursun
+    th.tw = start;
+    rig.hold(start, 4000);
+    rig.mama_suyu.publish_state(true);
+    uint32_t t0 = millis();
+    run_lag(rig, th, 40 * 60000, [&] { return rig.dev.mama_suyu_durumu_ == MAMA_SUYU_SICAKLIK_KORUMA; });
+    uint32_t t_hazir = millis();
+    for (auto &c : rig.mod_durumu.changes)
+      if (c.second == "SICAKLIK_KORUMA")
+      {
+        t_hazir = c.first;
+        break;
+      }
+    bool hazir = rig.dev.mama_suyu_durumu_ == MAMA_SUYU_SICAKLIK_KORUMA;
+    float tw_hazir = th.tw, okuma_hazir = th.sensor();
+    size_t runs_heat = rig.relay_runs.size();
+    uint32_t max_burst = 0;
+    for (auto r : rig.relay_runs)
+      max_burst = std::max(max_burst, r);
+    if (satir)
+    {
+      run_lag(rig, th, 60000);
+      const float tw_1dk = th.tw; // yoldaki ısı suya geçtikten sonra
+      run_lag(rig, th, 4 * 60000);
+      const bool ok = hazir && tw_1dk >= 38.0f && th.max_tw <= 42.0f;
+      printf("mama-tarama kazanç %.2f başlangıç %4.1f → hazır %4.1f dk, %zu vuruş (en uzun %4.1f sn), hazırdan 1 dk sonra su %.1f °C, en yüksek su %.1f °C%s\n", gain,
+             start, (t_hazir - t0) / 60000.0, runs_heat, max_burst / 1000.0, tw_1dk, th.max_tw, ok ? "" : "  <-- BANT DIŞI");
+      return ok ? 0 : 1;
+    }
+    int hazir1 = ses_sayisi(rig, MAMA_HAZIR_SESI);
+    std::string led_hazir = rig.btn_leds();
+    float tw_min = 999;
+    // sıcak tutma: 1 saat sonra kapanana kadar
+    for (uint32_t el = 0; el < 2 * 60 * 60000 && rig.dev.current_mode_ != MODE_KAPALI; el += SAMPLE_MS)
+    {
+      rig.feed(th.sensor());
+      for (uint32_t st = 0; st < SAMPLE_MS; st += STEP_MS)
+      {
+        rig.step();
+        th.advance(digitalRead(RELAY) == HIGH, STEP_MS / 1000.0f);
+      }
+      if (rig.dev.current_mode_ == MODE_MAMA_SUYU)
+        tw_min = std::min(tw_min, th.tw);
+    }
+    uint32_t t_kapandi = millis();
+    for (auto it = rig.aktif_mod.changes.rbegin(); it != rig.aktif_mod.changes.rend(); ++it)
+      if (it->second == "KAPALI")
+      {
+        t_kapandi = it->first;
+        break;
+      }
+    int hazir2 = ses_sayisi(rig, MAMA_HAZIR_SESI);
+    printf("  ölçüm (kazanç %.2f °C/sn, başlangıç %.1f °C): %zu vuruş, en uzunu %.1f sn · hazır: %.1f dk'da, su %.1f °C (okuma %.1f), lamba %s\n", gain, start,
+           runs_heat, max_burst / 1000.0, (t_hazir - t0) / 60000.0, tw_hazir, okuma_hazir, led_hazir.c_str());
+    printf("         en yüksek su %.1f °C · sıcak tutma: %zu vuruş, en düşük su %.1f °C · \"mama suyu hazır\" %d kez · hazırdan %.1f dk sonra mod %s\n", th.max_tw,
+           rig.relay_runs.size() - runs_heat, tw_min, hazir2, (t_kapandi - t_hazir) / 60000.0, rig.aktif_mod.state.c_str());
+    check(hazir && hazir1 == 1 && led_hazir == MAMA_BEYAZ, "mama suyu hazır oldu: bir anons, lamba beyaz");
+    check(tw_hazir >= 38.0f && tw_hazir <= 41.5f, "\"hazır\" denildiğinde su 38–41,5 °C arasında");
+    check(th.max_tw <= 42.5f, "su hiçbir anda 42,5 °C'yi geçmedi");
+    check(max_burst <= 12100, "vuruşlar 12 sn'yi geçmiyor");
+    check(tw_min >= 37.0f && hazir2 == 1, "sıcak tutma: su 37 °C'nin altına inmedi, yeniden anons yok");
+    check(rig.dev.current_mode_ == MODE_KAPALI && rig.relays_off() && t_kapandi - t_hazir >= 3599000 && t_kapandi - t_hazir <= 3603000,
+          "hazır olduktan 1 saat sonra mod kendiliğinden kapandı");
+    check(rig.first_kritik_ms == 0 && rig.violations == 0, "KRITIK yok, ihlal yok");
+    return 0;
+  }
+
+  int scenario_mama_ilik()
+  {
+    // Su 43 °C: sınırın altında olduğu için mod başlar ama ısıtmaz; okuma 41,5 °C'nin altına inene kadar "hazır" demez.
+    Rig rig;
+    ThermalLag th{43.0f, 0.7f};
+    th.cool = 0.01f;
+    rig.hold(43.0f, 4000);
+    rig.mama_suyu.publish_state(true);
+    run_lag(rig, th, 20000);
+    bool bekliyor = rig.dev.current_mode_ == MODE_MAMA_SUYU && rig.dev.mama_suyu_durumu_ == MAMA_SUYU_HAZIRLIK && ses_sayisi(rig, MAMA_HAZIR_SESI) == 0;
+    run_lag(rig, th, 10 * 60000, [&] { return rig.dev.mama_suyu_durumu_ == MAMA_SUYU_SICAKLIK_KORUMA; });
+    printf("  ölçüm: 43 °C'de %s · \"hazır\" su %.1f °C'ye inince · ısıtıcı toplam %.1f sn açık\n", bekliyor ? "bekliyor (anons yok)" : "ANONS VAR", th.tw,
+           rig.relay_on_ms / 1000.0);
+    check(bekliyor, "su hedefin üstündeyken \"mama suyu hazır\" denmedi");
+    check(rig.dev.mama_suyu_durumu_ == MAMA_SUYU_SICAKLIK_KORUMA && th.tw <= 41.5f && th.tw >= 39.0f && rig.relay_on_ms == 0,
+          "su 41,5 °C'nin altına inince \"hazır\" dendi; ısıtıcı hiç açılmadı");
+    check(rig.violations == 0, "ihlal yok");
+    return 0;
+  }
+
+  int scenario_mama_yeniden()
+  {
+    // Hazırken üstüne soğuk su eklenir (okuma 34 °C'ye düşer): baştan ısıtılır, hazır olunca yeniden haber verilir.
+    Rig rig;
+    Thermal th{30.0f, 0.40f, 0.005f, true};
+    rig.hold(th.t, 4000);
+    rig.mama_suyu.publish_state(true);
+    run_thermal(rig, th, 30 * 60000, nullptr, [&] { return rig.dev.mama_suyu_durumu_ == MAMA_SUYU_SICAKLIK_KORUMA; });
+    bool hazir1 = rig.dev.mama_suyu_durumu_ == MAMA_SUYU_SICAKLIK_KORUMA;
+    th.t = 34.0f;
+    run_thermal(rig, th, 4000);
+    bool geri = rig.dev.mama_suyu_durumu_ == MAMA_SUYU_HAZIRLIK;
+    std::string led_isit = rig.btn_leds();
+    run_thermal(rig, th, 30 * 60000, nullptr, [&] { return rig.dev.mama_suyu_durumu_ == MAMA_SUYU_SICAKLIK_KORUMA; });
+    int hazir = ses_sayisi(rig, MAMA_HAZIR_SESI);
+    printf("  ölçüm: ilk hazır %s · 34 °C'de durum %s, lamba %s · sonra %s, lamba %s · \"mama suyu hazır\" %d kez\n", hazir1 ? "var" : "YOK",
+           geri ? "HAZIRLIK" : "?", led_isit.c_str(), rig.mod_durumu.state.c_str(), rig.btn_leds().c_str(), hazir);
+    check(hazir1 && geri && led_isit == MAMA_KIRMIZI, "su soğuyunca yeniden ısıtmaya geçildi, lamba kırmızı");
+    check(rig.dev.mama_suyu_durumu_ == MAMA_SUYU_SICAKLIK_KORUMA && rig.btn_leds() == MAMA_BEYAZ && hazir == 2, "yeniden hazır: lamba beyaz, ikinci anons");
+    check(rig.first_kritik_ms == 0 && rig.violations == 0, "KRITIK yok, ihlal yok");
+    return 0;
+  }
+
+  int scenario_mama_kaldirilmisken_sicak()
+  {
+    // Mod kettle kaldırılmışken başlatılır, kettle 90 °C suyla geri konur: yine başlamamalı.
+    Rig rig;
+    rig.hold(30.0f, 4000);
+    rig.hold(-9.16f, 4000);
+    rig.mama_suyu.publish_state(true);
+    rig.hold(-9.16f, 4000);
+    bool kuruldu = rig.dev.current_mode_ == MODE_MAMA_SUYU;
+    size_t s0 = rig.sounds.size();
+    rig.hold(90.0f, 8000);
+    int bip = ses_sayisi(rig, "4+32", s0), hazir = ses_sayisi(rig, MAMA_HAZIR_SESI);
+    printf("  ölçüm: kaldırılmışken mod %s · 90 °C suyla geri konunca mod %s, anahtar %d, uyarı bip'i %d, \"mama suyu hazır\" %d, ısıtıcı toplam %.1f sn\n",
+           kuruldu ? "kuruldu" : "kurulmadı", rig.aktif_mod.state.c_str(), (int)rig.mama_suyu.state, bip, hazir, rig.relay_on_ms / 1000.0);
+    check(kuruldu, "hazırlık: kettle yokken mod kuruldu");
+    check(rig.dev.current_mode_ == MODE_KAPALI && !rig.mama_suyu.state && rig.relays_off() && rig.relay_on_ms == 0, "sıcak suyla geri konunca mod kapandı, ısıtıcı hiç açılmadı");
+    check(bip == 3 && hazir == 0, "üç uyarı bip'i; \"mama suyu hazır\" denmedi");
+    check(rig.violations == 0, "ihlal yok");
+    return 0;
+  }
+
   int usage()
   {
     printf("senaryolar: replay-aksam replay-yeniden az-su yarim-litre kuru az-su-sicrama tek-sicrama ardisik-sicrama toparlanma-adimi\n"
@@ -1783,7 +2035,8 @@ namespace
            "            replay-3eki-bos cay-su-bitince cay-bos-hazne cay-algi-yok cay-anahtar-kapali cay-sicak-su-konusma cay-sicak-su-konusma-sureli\n"
            "            cay-kettle-kaldir-demlerken cay-kettle-kaldir-sureli cay-ust-sinir algi-firtina otomatik-kapanma otomatik-kapanma-yok\n"
            "            replay-3eki-kaynatma kuru-sicak-tutmada cay-lamba-sirasi cay-lamba-seviye cay-fazla-basis\n"
-           "            cay-ha-sicak-su kritik-bekleyen-basis ses-tetik-suresi cay-az-su\n");
+           "            cay-ha-sicak-su kritik-bekleyen-basis ses-tetik-suresi cay-az-su\n"
+           "            mama-sicak-su mama-40 mama-ilik mama-yeniden mama-kaldirilmisken-sicak\n");
     return 2;
   }
 } // namespace
@@ -1851,6 +2104,16 @@ int main(int argc, char **argv)
     scenario_cay_bos_hazne();
   else if (s == "cay-az-su")
     scenario_cay_az_su();
+  else if (s == "mama-sicak-su")
+    scenario_mama_sicak_su();
+  else if (s == "mama-40")
+    return scenario_mama_40(argc > 3 ? (float)atof(argv[2]) : 0.7f, argc > 3 ? (float)atof(argv[3]) : 20.0f, argc > 3) ? 1 : (g_failed ? 1 : (printf("  sonuç: %d beklentiden %d tutmadı\n", g_checked, g_failed), 0));
+  else if (s == "mama-ilik")
+    scenario_mama_ilik();
+  else if (s == "mama-yeniden")
+    scenario_mama_yeniden();
+  else if (s == "mama-kaldirilmisken-sicak")
+    scenario_mama_kaldirilmisken_sicak();
   else if (s == "replay-3eki-bos")
     scenario_replay_3eki_bos();
   else if (s == "cay-algi-yok")

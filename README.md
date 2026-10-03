@@ -37,6 +37,15 @@ Proje kapsamında cihaz üzerinde yapılan değişiklikler, cihazın garanti kap
 
 ### ⏱️ **Kendiliğinden Kapanma (isteğe bağlı)**
 - `otomatik_kapanma: 2h` — mod açıldıktan bu süre sonra cihaz kendini kapatır (fabrika yazılımında 2 saat).
+- `mama_suyu_sicak_tutma: 1h` — mama suyu "hazır" olduktan bu süre sonra mod kapanır.
+
+### 🍼 **Mama Suyu**
+- Hedef 40 °C. Sensör kettle tabanında ve ısıtıcının 15–20 sn gerisinden geldiği için su "vur, bekle, ölç" ile ısıtılır:
+  kısa bir vuruş, 40 sn bekleme, vuruşun suyu kaç derece ısıttığı ölçülür ve sonraki vuruş buna göre boyutlanır.
+- "Mama suyu hazır" yalnız oturmuş okuma 39–41,5 °C arasındayken söylenir. Hazırken okuma 38 °C'nin altına inince
+  yeniden ısıtılır.
+- Su zaten sıcaksa (okuma > 45 °C) mod **başlamaz**: üç bip, mama lambası üç kez yanıp söner.
+- Fabrika yazılımının mama suyu düzeni ve ölçümler: [docs/fabrika-yazilimi.md](docs/fabrika-yazilimi.md).
 
 ### 🔄 **Kettle Koruma Modu**
 - Kettle kaldırıldığında geçici koruma modu.
