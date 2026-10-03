@@ -43,6 +43,10 @@ Proje kapsamında cihaz üzerinde yapılan değişiklikler, cihazın garanti kap
 ### 🔊 **Sesli ve Görsel Geri Bildirim**
 - **Buton Sesi:** Kullanıcı geri bildirimi için dokunmatik buton sesleri.  
 - **Konuşma Sesi:** İşlemlerin durumuna göre sesli uyarılar.  
+- **Çay lambası:** tuşa basılınca kırmızı, demleme bitince beyaz. Tek basışta (MAX) tek bip; 2–4 basışta seviye
+  beyaz yanıp sönmeyle gösterilir.
+- **Ses denemesi (isteğe bağlı):** `id(caysever).ses_dene(maske)` ses çipindeki klipleri doğrudan çalar; örneği
+  `example.yaml`'ın sonunda.
 
 ### 🌐 **Home Assistant Entegrasyonu**
 - ESPHome ile cihazınızı akıllı ev sistemleriyle entegre edin.

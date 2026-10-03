@@ -45,6 +45,10 @@ demleme ısıtıcısı ve termostatı gövdede, kettle'ın yerinde olması bu gi
 - Ana döngü ~20 ms'de bir döner (FreeRTOS 100 Hz, `vTaskDelay(2)`).
 - NTC: ~0,35 sn'de bir sıcaklık (250 ms bekleme + 10 ms arayla 10 örnek; 2.–5. örneklerin ortalaması), **tam sayı °C**.
   10 °C ve üstü düşüş ancak art arda 3 ölçümde görülürse kabul edilir (sıçrama süzgeci). Yükseliş hemen kabul edilir.
+- Sıcaklık hesabı: `R = v_mV × 31600 / (3300 − v_mV)`, `T = 1 / (ln(R / 100785) / 3950 + 1/298,15) − 273,15`.
+  `example.yaml`'daki değerlerle (bölücü 10 kΩ, R25 = 34 kΩ, B = 3950) aynı gerilimde fabrika yaklaşık 2,2 °C daha
+  düşük okur: fabrikanın 85 / 90 / 96 / 115 °C eşikleri bileşenin okumasında 87,1 / 92,1 / 98,2 / 117,5 °C'ye denk gelir
+  (hesaptan çıkarım; iki yazılımın gerilim okuması aynı sayıldı).
 - Kettle yerinde mi: ham ADC değeri 10–1010 aralığı dışındaysa "kettle yok" → bütün lambalar söner; geri konunca
   lambalar eski hâline döner, kuru çalışma ölçümü yeniden başlar.
 
@@ -65,6 +69,11 @@ demleme ısıtıcısı ve termostatı gövdede, kettle'ın yerinde olması bu gi
 
 Demleme ve bekleme boyunca kettle ısıtıcı "sıcak tut" düzeninde çalışır (§5). Çay lambası: su 85 °C'nin üstünde ve
 kaynamışsa beyaz, 85 °C ve altına düşünce kırmızı (yeniden ısıtıyor).
+
+> **Gözlemle çelişiyor (çözülmedi).** Cihazı fabrika yazılımıyla kullanan birinin hatırladığı ve bileşenin süreli
+> düzeninde de olan davranış: lamba kaynatırken ve **demlerken kırmızı**, "çay demlendi" denince beyaz. Kod yeniden
+> okundu ve yukarıdaki gibi (kaynayınca beyaz; sıcaklık ≤ 85 °C ise kırmızı). Fabrika yazılımlı bir cihazda
+> doğrulanana kadar bileşen gözlemi izler: iki düzende de demleme bitene kadar kırmızı.
 
 Filtre kahve (tuş 2) aynı düzenektir; farkları: başlangıç konuşması ses 2, su bittikten sonra bekleme **120 sn**,
 tazelik **40 dk**. Su kaynatma (tuş 3): kaynayınca ses 4; 85 °C'ye düşünce yeniden kaynatır; 2 saatte kapanır. Mama
@@ -130,7 +139,7 @@ Sessiz modda konuşmalar çalmaz, yerine bip çalar. Sessiz modu: tuş 4 + tuş 
 | Su bittikten sonra bekleme | 900 sn | algıyla 900 sn; süreli düzende 240 sn |
 | Üst hazne boşken | ses 3, her şey kapanır, çay lambası kırmızı yanıp söner | algıyla ~47 sn'de anlaşılır; "çay demlendi" sesi, sıcak tutma ve tazelik (bilinçli fark: kullanıcıların alışkanlığı demlenmiş çayı yeniden ısıtmak için çay tuşuna basmak) |
 | Çay tuşu | aç / kapat; seviye yok | kapalıyken 1–4 basış = seviye, açıkken basış = kapat |
-| Çay lambası | ısıtırken kırmızı, kaynayınca beyaz | algıyla aynı; süreli düzende demleme bitene kadar kırmızı |
+| Çay lambası | kodda: ısıtırken kırmızı, kaynayınca beyaz (gözlem farklı, §3'teki not) | tuşa basılınca kırmızı, demleme bitene kadar kırmızı, "çay demlendi"de beyaz |
 | Kendiliğinden kapanma | 2 saat | `otomatik_kapanma` ile (ör. `2h`) |
 | Kettle kaldırılınca lambalar | söner | söner |
 | Su yetersiz algısı | 25 sn'de 25 °C (bir kez) + 115 °C | 7 sn'lik pencerede 1,65 °C/sn (sürekli, sıçrama doğrulamalı) + 106 °C + 120 °C |
