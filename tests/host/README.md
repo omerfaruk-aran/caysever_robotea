@@ -74,7 +74,7 @@ duyuldu). O cihazdaki sürüm "su yok" kararını bir sonraki sıcaklık okumas�
 | Senaryo | Önce | Sonra |
 |---|---|---|
 | `cay-su-bitince` — üst haznede 200 sn'lik su | röle 430 sn açık (230 sn'si kuruda), 11,2 dk'da "demlendi" | 16 sn kesintisiz, sonra 10 sn açık + 0,24 sn ölçüm; röle su bitip termostat açınca bırakılıyor (246 sn); son çekilişten 900 sn sonra "demlendi"; lamba demlerken kırmızı, "demlendi"de beyaz |
-| `cay-bos-hazne` — üst hazne boş | demleme rölesi 430 sn açık, sonra "demlendi" | 47 sn'de anlaşılıyor; "çay demlendi" sesi, sıcak tutma, Taze; mod 2 saatte kapanıyor |
+| `cay-bos-hazne` — üst hazne boş | demleme rölesi 430 sn açık, sonra "demlendi" | 47 sn'de anlaşılıyor (o sürümde "çay demlendi" + sıcak tutma; sonradan hata sayıldı, aşağıda) |
 | `replay-3eki-bos` — gerçek cihaz kaydı | — | yukarıdaki doğruluk ölçümü |
 | `cay-sicak-su-konusma` — su kaynamışken çay tuşu (algılı düzen) | — | konuşma kesilmiyor, lamba kırmızı |
 | `cay-kettle-kaldir-demlerken` — kettle su aktarımı sırasında kaldırılıyor | — | demleme iptal olmuyor, kettle yokken su aktarılmıyor, geri konunca sürüyor |
@@ -111,6 +111,17 @@ fabrika yazılımında tuşa basılınca kırmızı yanar, demleme bitince beyaz
 | `kritik-bekleyen-basis` — çay tuşuna basıldıktan sonraki 1 sn içinde KRITIK | alarm onaylanınca çay modu **kendiliğinden başlıyor**, ısıtıcı açılıyor | basış unutuluyor; onaydan sonra cihaz boşta |
 | `cay-su-bitince`, `cay-sicak-su-konusma` — algılı düzende lamba | kaynayınca beyaz | demlerken kırmızı |
 | **Toplam (bütün senaryolar)** | **36 / 44** | **44 / 44** |
+
+### İlk dakikada biten demleme: "çay demlendi" yerine hata
+
+"Önce" = yukarıdaki "sonra". Su aktarımı ilk dakikada bitiyorsa çay demlenmemiştir: üst hazne boştur ya da su demleme
+ısıtıcısına ulaşmıyordur (cihaz ikisini ayıramaz). Fabrika yazılımı bunu hata sayar.
+
+| Senaryo | Önce | Sonra |
+|---|---|---|
+| `cay-bos-hazne` — üst hazne boş | 47 sn'de "çay demlendi", sıcak tutma, Taze | 47 sn'de her şey kapanıyor: üç bip, çay lambası üç kez kırmızı, tazelik "Demlenemedi"; su soğuyunca ısıtıcı açılmıyor; yeni mod başlayınca "Demlenemedi" siliniyor |
+| `cay-az-su` — üst haznede 30 sn'lik su | — | aktarım ilk dakikayı aşıyor: demlenme bekleniyor, "çay demlendi", Taze |
+| **Toplam (bütün senaryolar)** | **44 / 45** | **45 / 45** |
 
 `SRC=<eski sürüm> ./run.sh` ile eski sürümler de derlenebilir: bu sürümdeki seçenekler `CAYSEVER_ROBOTEA_SU_BITTI_ALGISI`
 ve `CAYSEVER_ROBOTEA_SES_DENEME` işaretleriyle korunur.

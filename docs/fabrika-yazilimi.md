@@ -137,7 +137,7 @@ Sessiz modda konuşmalar çalmaz, yerine bip çalar. Sessiz modu: tuş 4 + tuş 
 |---|---|---|
 | Demlemenin bitişi | GPIO34 ile "su bitti" | `su_bitti_algisi_switch` varsa aynı döngü; yoksa sabit süre: 430 / 330 / 240 / 150 sn (tuşa 1–4 basış) |
 | Su bittikten sonra bekleme | 900 sn | algıyla 900 sn; süreli düzende 240 sn |
-| Üst hazne boşken | ses 3, her şey kapanır, çay lambası kırmızı yanıp söner | algıyla ~47 sn'de anlaşılır; "çay demlendi" sesi, sıcak tutma ve tazelik (bilinçli fark: kullanıcıların alışkanlığı demlenmiş çayı yeniden ısıtmak için çay tuşuna basmak) |
+| Üst hazne boşken (ilk 60 sn'de bitti) | ses 3, her şey kapanır, çay lambası kırmızı yanıp söner | aynı mantık: ~47 sn'de anlaşılır, her şey kapanır, üç bip, çay lambası üç kez yanıp söner, tazelik "Demlenemedi" |
 | Çay tuşu | aç / kapat; seviye yok | kapalıyken 1–4 basış = seviye, açıkken basış = kapat |
 | Çay lambası | kodda: ısıtırken kırmızı, kaynayınca beyaz (gözlem farklı, §3'teki not) | tuşa basılınca kırmızı, demleme bitene kadar kırmızı, "çay demlendi"de beyaz |
 | Kendiliğinden kapanma | 2 saat | `otomatik_kapanma` ile (ör. `2h`) |

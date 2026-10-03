@@ -43,7 +43,7 @@ nan-kaynatirken nan-acilis kritik-mod-yayini kritik-ha-komutu kritik-kisa-nan kr
 led-kettle-kaldir led-diger-modlar kaldirilmisken-komut select-yok ota-basliyor acilis-role \
 replay-3eki-bos cay-su-bitince cay-bos-hazne cay-algi-yok cay-anahtar-kapali cay-sicak-su-konusma cay-sicak-su-konusma-sureli \
 cay-kettle-kaldir-demlerken cay-kettle-kaldir-sureli cay-ust-sinir algi-firtina otomatik-kapanma otomatik-kapanma-yok \
-replay-3eki-kaynatma kuru-sicak-tutmada cay-lamba-sirasi cay-lamba-seviye cay-fazla-basis cay-ha-sicak-su kritik-bekleyen-basis ses-tetik-suresi"
+replay-3eki-kaynatma kuru-sicak-tutmada cay-lamba-sirasi cay-lamba-seviye cay-fazla-basis cay-ha-sicak-su kritik-bekleyen-basis ses-tetik-suresi cay-az-su"
 fail=0
 passed=0
 for s in $ALL; do

@@ -14,6 +14,7 @@
 // Bu sürümde demlemede "su bitti" algısı ve kendiliğinden kapanma var (sınama programı buna bakar).
 #define CAYSEVER_ROBOTEA_SU_BITTI_ALGISI 1
 #define CAYSEVER_ROBOTEA_SES_DENEME 1
+#define CAYSEVER_ROBOTEA_DEMLENEMEDI 1
 
 namespace esphome
 {
@@ -263,7 +264,7 @@ namespace esphome
       static constexpr uint32_t BREW_SENSE_SETTLE_MS = 40;   // röle kontağının bırakması için
       static constexpr uint32_t BREW_SENSE_WINDOW_MS = 200;  // ölçüm penceresi (fabrika ~150 ms)
       static constexpr uint32_t BREW_SENSE_MIN_EDGES = 6;    // fabrika eşiği: bundan az kenar = su bitti
-      static constexpr uint32_t BREW_EARLY_MS = 60000;       // döngünün ilk 60 sn'sinde biterse üst hazne boştu: demlenme beklenmez
+      static constexpr uint32_t BREW_EARLY_MS = 60000;       // döngünün ilk 60 sn'sinde biterse demleme yapılamadı sayılır (hata)
       static constexpr uint32_t BREW_STEEP_MS = 900000;      // fabrika: son röle açılışından 900 sn sonra çay hazır
       static constexpr uint32_t BREW_TRUST_MIN_RATE = 30;    // kenar/sn: güven için en az (6 kenar / 200 ms'nin karşılığı)
       static constexpr uint32_t BREW_STORM_RATE = 2000;      // kenar/sn: bunun üstü şebeke işareti olamaz
@@ -273,7 +274,9 @@ namespace esphome
       void handle_brew_cycle_();
       void brew_set_relay_(bool on);
       void brew_resume_after_koruma_();
-      void brew_empty_finish_();
+      void brew_fail_();                  // demleme yapılamadı: her şey kapanır, uyarı verilir
+      void brew_fail_signal_(bool on);    // uyarının bir adımı: bip ve çay lambası
+      bool brew_failed_{false};           // son demleme yapılamadı; yeni bir mod başlatılana kadar tazelik sensöründe görünür
       void publish_brew_rate_(uint32_t rate, bool force = false);
       void finish_demleme_();
 

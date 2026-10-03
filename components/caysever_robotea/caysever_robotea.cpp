@@ -1629,7 +1629,7 @@ namespace esphome
                     ESP_LOGI("CayseverRobotea", "Demleme: hatta işaret yok (%u kenar), su bitmiş görünüyor (pompalama %u sn).", (unsigned)n, (unsigned)(this->brew_pump_ms_ / 1000));
                     if (now - this->brew_cycle_start_ms_ <= BREW_EARLY_MS)
                     {
-                        this->brew_empty_finish_();
+                        this->brew_fail_();
                         return;
                     }
                 }
@@ -1690,12 +1690,52 @@ namespace esphome
 
         // Üst haznede su yok: demleme başlar başlamaz bitti (ilk ölçümlerde hatta işaret kalmadı). Aktarılacak su
         // olmadığına göre demlenme beklenmez: doğrudan "çay hazır" denir, sıcak tutma ve tazelik süresi başlar.
-        void CayseverRobotea::brew_empty_finish_()
+        // Demleme yapılamadı: su aktarımı daha ilk dakikada bitti. Üst hazne boştur ya da su demleme ısıtıcısına
+        // ulaşmıyordur (ör. hazne ya da başlık yerine oturmamış); cihaz ikisini ayıramaz. Fabrika yazılımındaki gibi
+        // hata sayılır: demleme ve kettle ısıtıcısı kapanır, mod kapanır, "çay demlendi" denmez, tazelik başlamaz.
+        void CayseverRobotea::brew_fail_()
         {
-            ESP_LOGW("CayseverRobotea", "Demleme: üst haznede su yok (ilk %u sn içinde bitti); demlenme beklenmeden sıcak tutmaya geçiliyor.", (unsigned)(BREW_EARLY_MS / 1000));
+            ESP_LOGW("CayseverRobotea", "Demleme yapılamadı: su aktarımı ilk %u sn içinde bitti (üst hazne boş ya da su ısıtıcıya ulaşmıyor). Çay demleme kapatılıyor.", (unsigned)(BREW_EARLY_MS / 1000));
             this->brew_set_relay_(false);
+            digitalWrite(this->relay_pin_, LOW);
+            this->relay_active_ = false;
+            this->brew_failed_ = true;
+
+            // Mod bir sonraki turda kapanır; o âna kadar bu karar yinelenmesin
             this->brew_phase_ = BREW_STEEP;
-            this->finish_demleme_();
+            this->brew_last_on_ms_ = this->current_time_;
+            this->set_mode(MODE_KAPALI, 0);
+
+            // Uyarı: üç bip; çay lambası bip'lerle birlikte üç kez kırmızı yanıp söner. İlk adım, modun kapanıp
+            // lambaların söndüğü turdan sonraya bırakılır ki üç yanıp sönme de tam görünsün.
+            this->set_timeout("dem_uyari_1a", 100, [this]()
+                              { this->brew_fail_signal_(true); });
+            this->set_timeout("dem_uyari_1k", 300, [this]()
+                              { this->brew_fail_signal_(false); });
+            this->set_timeout("dem_uyari_2a", 500, [this]()
+                              { this->brew_fail_signal_(true); });
+            this->set_timeout("dem_uyari_2k", 700, [this]()
+                              { this->brew_fail_signal_(false); });
+            this->set_timeout("dem_uyari_3a", 900, [this]()
+                              { this->brew_fail_signal_(true); });
+            this->set_timeout("dem_uyari_3k", 1100, [this]()
+                              { this->brew_fail_signal_(false); });
+        }
+
+        void CayseverRobotea::brew_fail_signal_(bool on)
+        {
+            if (on)
+            {
+                // Uyarı olduğu için "Buton Sesi" anahtarına bakılmaz (KRITIK alarmı gibi)
+                this->activate_sound(std::map<int, bool>{
+                    {this->sound_pins_[0], true},
+                    {this->sound_pins_[2], true},
+                    {this->sound_pins_[1], false}});
+            }
+            // Lamba yalnız kettle yerindeyken ve araya yeni bir mod girmemişken oynatılır
+            if (this->kettle_durumu_ != NORMAL || !this->brew_failed_)
+                return;
+            this->control_led(on ? 3 : -1);
         }
 
         // Mod açıldıktan otomatik_kapanma süresi sonra cihaz kendini kapatır (fabrika yazılımında 2 saat).
@@ -2154,9 +2194,15 @@ namespace esphome
                 }
             }
 
+            // Son demleme yapılamadıysa yeni bir mod başlatılana kadar sebep Home Assistant'ta görünsün
+            if (durum == 0 && this->brew_failed_)
+            {
+                durum = 4; // Demlenemedi
+            }
+
             if (this->tazelik_sensor_ != nullptr && durum != this->tazelik_son_durum_)
             {
-                static const char *const DURUMLAR[] = {"Yok", "Demleniyor", "Taze", "Bayat"};
+                static const char *const DURUMLAR[] = {"Yok", "Demleniyor", "Taze", "Bayat", "Demlenemedi"};
                 this->tazelik_sensor_->publish_state(DURUMLAR[durum]);
                 this->tazelik_son_durum_ = durum;
             }
@@ -2260,6 +2306,7 @@ namespace esphome
             if (new_mode != MODE_KAPALI)
             {
                 this->mode_start_ms_ = millis(); // kendiliğinden kapanma bu andan sayılır
+                this->brew_failed_ = false;      // yeni mod: önceki "demlenemedi" bilgisi silinir
             }
 
             // 3) Yeni mod ON işlemleri

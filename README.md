@@ -28,7 +28,9 @@ Proje kapsamında cihaz üzerinde yapılan değişiklikler, cihazın garanti kap
 - Fabrika yazılımındaki gibi: demleme rölesi 10 sn'de bir kısa süre bırakılır ve **GPIO34** girişinde şebeke işareti
   kalıp kalmadığına bakılır. İşaret kesildiyse üst haznedeki su bitmiştir; röle bırakılır, su bittikten 15 dk sonra
   "çay demlendi" denir. Pompalama hiçbir durumda seçilen seviyenin süresini aşmaz.
-- Üst hazne boşsa (~47 sn'de anlaşılır) demlenme beklenmeden sıcak tutmaya ve tazelik sayacına geçilir.
+- Su aktarımı daha ilk dakikada biterse (üst hazne boş ya da su ısıtıcıya ulaşmıyor; ~47 sn'de anlaşılır) demleme
+  **yapılamadı** sayılır: her şey kapanır, üç bip çalar, çay lambası üç kez yanıp söner, tazelik sensörü yeni bir mod
+  başlatılana kadar "Demlenemedi" gösterir. Fabrika yazılımı da bu durumu hata sayar.
 - Yaml'da `su_bitti_algisi_switch` ile açılır; anahtar kapatılırsa ya da girişte hiç işaret görülmezse demleme eski,
   süreli düzenle yürür. `demleme_hatti_sensor` tanılama sensörü girişteki kenar sayısını gösterir.
 - Ayrıntı: [docs/fabrika-yazilimi.md](docs/fabrika-yazilimi.md).
