@@ -67,6 +67,8 @@ namespace esphome
       void set_mode_sensor(text_sensor::TextSensor *mode_sensor) { this->mode_sensor_ = mode_sensor; }
       void set_mode_state_sensor(text_sensor::TextSensor *mode_state_sensor) { this->mode_state_sensor_ = mode_state_sensor; }
       void set_kettle_state_sensor(text_sensor::TextSensor *kettle_state_sensor) { this->kettle_state_sensor_ = kettle_state_sensor; }
+      void set_tazelik_sensor(text_sensor::TextSensor *tazelik_sensor) { this->tazelik_sensor_ = tazelik_sensor; }
+      void set_tazelik_kalan_sensor(sensor::Sensor *tazelik_kalan_sensor) { this->tazelik_kalan_sensor_ = tazelik_kalan_sensor; }
       void set_mode(ActiveMode new_mode, int press_count);
 
       void set_ntc_sensor(sensor::Sensor *sensor) { this->ntc_sensor_ = sensor; }
@@ -104,6 +106,10 @@ namespace esphome
       text_sensor::TextSensor *mode_sensor_{nullptr};
       text_sensor::TextSensor *mode_state_sensor_{nullptr};
       text_sensor::TextSensor *kettle_state_sensor_{nullptr};
+      text_sensor::TextSensor *tazelik_sensor_{nullptr};  // Yok / Demleniyor / Taze / Bayat
+      sensor::Sensor *tazelik_kalan_sensor_{nullptr};     // Taze kalma süresinden kalan dakika
+      int tazelik_son_durum_{-1};                         // Son yayınlanan durum (0=Yok 1=Demleniyor 2=Taze 3=Bayat)
+      int tazelik_son_kalan_{-2};                         // Son yayınlanan kalan dakika (-1 = NAN)
       const char *active_mode_to_string(ActiveMode mode);
 
       SuKaynatmaDurumu su_kaynatma_durumu_;
@@ -124,6 +130,7 @@ namespace esphome
       void publish_mode_();
       void publish_kettle_state_();
       void publish_mode_state_();
+      void publish_tazelik_();
 
       void update_su_kaynatma(bool su_kaynatma);
       void update_mama_suyu(bool mama_suyu);
@@ -182,6 +189,7 @@ namespace esphome
       unsigned long demleme_end_time_ = 0;   // Demleme işlemi bitiş zamanı
       unsigned long demled_start_time_ = 0;  // DemLED başlangıç zamanı
       bool demled_active_ = false;           // DemLED aktif mi?
+      static constexpr uint32_t TAZELIK_SURESI_MS = 60 * 60 * 1000; // Dem sonrası çayın taze sayıldığı süre (60 dk)
       unsigned int demleme_suresi_ = 0;      // Demleme Süresi
       int demlenme_seviyesi_ = 0;            // Çay demleme seviyesi
       bool manual_exit = false;

@@ -1,7 +1,7 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import sensor, switch, text_sensor, select
-from esphome.const import CONF_ID, CONF_SENSOR, CONF_ICON
+from esphome.const import CONF_ID, CONF_SENSOR, CONF_ICON, UNIT_MINUTE
 
 CODEOWNERS = ["@omerfaruk-aran"]
 AUTO_LOAD = ["sensor", "switch", "select", "text_sensor"]
@@ -27,6 +27,8 @@ CONF_MAMA_SUYU = "mama_suyu_switch"
 CONF_BUTON_SESI_SWITCH = "buton_sesi_switch"
 CONF_KONUSMA_SESI_SWITCH = "konusma_sesi_switch"
 CONF_SU_KONTROL_SWITCH = "su_kontrol_switch"
+CONF_CAY_TAZELIK_SENSOR = "cay_tazelik_sensor"
+CONF_CAY_TAZELIK_KALAN_SENSOR = "cay_tazelik_kalan_sensor"
 
 CAY_DEMLEME_LEVEL_OPTIONS = [
     "1/4",
@@ -76,6 +78,16 @@ KETTLE_DURUM_SCHEMA = text_sensor.text_sensor_schema().extend(
     {cv.Optional(CONF_ICON, default="mdi:kettle"): cv.icon}
 )
 
+CAY_TAZELIK_SCHEMA = text_sensor.text_sensor_schema().extend(
+    {cv.Optional(CONF_ICON, default="mdi:tea-outline"): cv.icon}
+)
+
+CAY_TAZELIK_KALAN_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement=UNIT_MINUTE,
+    icon="mdi:timer-sand",
+    accuracy_decimals=0,
+)
+
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -88,6 +100,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_ACTIVE_MODE_SENSOR): AKTIF_MOD_SCHEMA,
         cv.Optional(CONF_MODE_STATE_SENSOR): MOD_DURUM_SCHEMA,
         cv.Optional(CONF_KETTLE_STATE_SENSOR): KETTLE_DURUM_SCHEMA,
+        cv.Optional(CONF_CAY_TAZELIK_SENSOR): CAY_TAZELIK_SCHEMA,
+        cv.Optional(CONF_CAY_TAZELIK_KALAN_SENSOR): CAY_TAZELIK_KALAN_SCHEMA,
         cv.Optional(CONF_BUTON_SESI_SWITCH): cv.use_id(switch.Switch),
         cv.Optional(CONF_KONUSMA_SESI_SWITCH): cv.use_id(switch.Switch),
         cv.Optional(CONF_SU_KONTROL_SWITCH): cv.use_id(switch.Switch),
@@ -152,5 +166,15 @@ async def to_code(config):
             kettle_state_sens, kettle_state_sens_conf
         )
         cg.add(var.set_kettle_state_sensor(kettle_state_sens))
+
+    if CONF_CAY_TAZELIK_SENSOR in config:
+        tazelik_conf = config[CONF_CAY_TAZELIK_SENSOR]
+        tazelik_sens = cg.new_Pvariable(tazelik_conf[CONF_ID])
+        await text_sensor.register_text_sensor(tazelik_sens, tazelik_conf)
+        cg.add(var.set_tazelik_sensor(tazelik_sens))
+
+    if CONF_CAY_TAZELIK_KALAN_SENSOR in config:
+        tazelik_kalan_sens = await sensor.new_sensor(config[CONF_CAY_TAZELIK_KALAN_SENSOR])
+        cg.add(var.set_tazelik_kalan_sensor(tazelik_kalan_sens))
 
     await cg.register_component(var, config)

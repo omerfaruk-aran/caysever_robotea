@@ -53,6 +53,10 @@ caysever_robotea:
     name: "Mod Durumu"
   active_mode_sensor:
     name: "Aktif Mod"
+  cay_tazelik_sensor:
+    name: "Çay Tazeliği"
+  cay_tazelik_kalan_sensor:
+    name: "Çay Tazeliği Kalan"
   mama_suyu_switch:
     name: Mama Suyu
   su_kaynatma_switch:

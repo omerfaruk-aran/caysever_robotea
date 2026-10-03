@@ -243,6 +243,8 @@ namespace esphome
             this->handle_critical_sounds();
 
             this->process_demleme_feedback_();
+
+            this->publish_tazelik_();
         }
         void CayseverRobotea::handle_critical_sounds()
         {
@@ -1338,7 +1340,7 @@ namespace esphome
                 {
                     unsigned long elapsed_time = this->current_time_ - this->demled_start_time_;
                     // 60 dakika = 3.600.000 ms
-                    if (elapsed_time >= 3600000)
+                    if (elapsed_time >= TAZELIK_SURESI_MS)
                     {
                         // tamamlandı, DemLED kapat ve BayLED'i aç
                         if (digitalRead(this->dem_led_pin_) != LOW)
@@ -1696,6 +1698,49 @@ namespace esphome
             if (this->mode_sensor_ != nullptr)
             {
                 this->mode_sensor_->publish_state(this->active_mode_to_string(this->current_mode_));
+            }
+        }
+
+        void CayseverRobotea::publish_tazelik_()
+        {
+            if (this->tazelik_sensor_ == nullptr && this->tazelik_kalan_sensor_ == nullptr)
+                return;
+
+            // Tazelik, demleme bitince başlayan mevcut DemLED zamanlayıcısından türetiliyor:
+            // DEMLEME_SICAKLIK_KORUMA + demled_active_ => Taze, süre dolunca (demled_active_ false) => Bayat
+            int durum = 0; // Yok
+            int kalan = -1; // NAN
+            if (this->cay_demleme_durumu_ == DEMLEME_HAZIRLIK || this->cay_demleme_durumu_ == DEMLEME_BASLADI)
+            {
+                durum = 1; // Demleniyor
+            }
+            else if (this->cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA)
+            {
+                if (this->demled_active_)
+                {
+                    uint32_t gecen = this->current_time_ - this->demled_start_time_;
+                    uint32_t kalan_ms = gecen < TAZELIK_SURESI_MS ? TAZELIK_SURESI_MS - gecen : 0;
+                    durum = 2; // Taze
+                    kalan = (kalan_ms + 59999) / 60000; // yukarı yuvarla: son dakikada 1 göster
+                }
+                else
+                {
+                    durum = 3; // Bayat
+                    kalan = 0;
+                }
+            }
+
+            if (this->tazelik_sensor_ != nullptr && durum != this->tazelik_son_durum_)
+            {
+                static const char *const DURUMLAR[] = {"Yok", "Demleniyor", "Taze", "Bayat"};
+                this->tazelik_sensor_->publish_state(DURUMLAR[durum]);
+                this->tazelik_son_durum_ = durum;
+            }
+
+            if (this->tazelik_kalan_sensor_ != nullptr && kalan != this->tazelik_son_kalan_)
+            {
+                this->tazelik_kalan_sensor_->publish_state(kalan < 0 ? NAN : static_cast<float>(kalan));
+                this->tazelik_son_kalan_ = kalan;
             }
         }
 
