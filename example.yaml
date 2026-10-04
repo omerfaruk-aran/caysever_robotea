@@ -125,14 +125,15 @@ sensor:
     pin: GPIO35
     attenuation: 12db
     # Okumaya şebeke uğultusu karışıyor; 2 sn'de bir tek örnek alınınca birkaç °C'lik yavaş bir dalgalanma olarak
-    # görünür. 125 ms'de bir örnek alınıp 16 örneğin ortancası kullanılır: uğultu ve tek tük bozuk örnekler elenir.
-    # Bileşene değer yine 2 sn'de bir gelir (16 × 125 ms).
+    # görünür. 125 ms'de bir örnek alınıp son 15 örneğin ortancası kullanılır: uğultu ve tek tük bozuk örnekler elenir.
+    # Bileşene değer yine 2 sn'de bir gelir (16 × 125 ms). Açılıştaki ilk değer de pencere dolunca yayınlanır; tek bir
+    # ham örnek hiçbir zaman bileşene ulaşmaz (o âna kadar okuma yoktur, bileşen KORUMA'da bekler).
     update_interval: 125ms
     filters:
       - median:
-          window_size: 16
+          window_size: 15
           send_every: 16
-          send_first_at: 1
+          send_first_at: 16
   - platform: resistance
     sensor: adc_sensor
     configuration: DOWNSTREAM  # Sabit direnç aşağı yönlü bağlandı

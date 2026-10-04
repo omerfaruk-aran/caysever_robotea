@@ -159,3 +159,8 @@ veriyor. Eşiğe dokunulmadı.
 
 Donanımın kendisi: rölenin gerçekten bırakması, sensör devresinin elektriksel davranışı, ESP32'nin açılıştaki pin
 durumları, ses çipi, Wi-Fi olayları. Bunlar yalnız cihazda görülür.
+
+Sıcaklık süzgeci: düzenek bileşene sıcaklığı doğrudan, 2 sn'de bir verir; `example.yaml`'daki ADC ortanca süzgeci
+(125 ms'de bir örnek, son 15 örneğin ortancası) modellenmez. Gerçek cihazda bileşenin gördüğü her değer son ~2 sn'nin
+ortancasıdır, yani güvenlik kararları (eğim, 115 °C, 120 °C) en çok bir okuma aralığı kadar gecikmiş veriyle verilir;
+senaryolardaki "bir okuma (2 sn) gecikir" payı bunu da kapsar.
