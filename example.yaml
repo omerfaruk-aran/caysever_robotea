@@ -74,6 +74,14 @@ caysever_robotea:
   buton_sesi_switch: buton_sesi
   konusma_sesi_switch: konusma_sesi
   su_kontrol_switch: su_kontrol
+  # İsteğe bağlı — fabrika yazılımındaki düzen (docs/fabrika-yazilimi.md):
+  # Demleme, üst haznedeki su bitince biter (GPIO34 girişinden algılanır); su bittikten 15 dk sonra "çay demlendi".
+  # Anahtar kapalıysa ya da girişte işaret görülmezse demleme seçilen seviyenin süresiyle yürür (eski düzen).
+  su_bitti_algisi_switch: su_bitti_algisi
+  demleme_hatti_sensor:
+    name: "Demleme Hattı"
+  # Mod açıldıktan bu süre sonra cihaz kendini kapatır (fabrikada 2 saat). Verilmezse kapanmaz.
+  otomatik_kapanma: 2h
 
 switch:
   - platform: template
@@ -96,6 +104,14 @@ switch:
     name: "Su Kontrolü"
     id: su_kontrol
     icon: mdi:water-check
+    entity_category: diagnostic
+    restore_mode: RESTORE_DEFAULT_ON
+    optimistic: true
+
+  - platform: template
+    name: "Su Bitti Algısı"
+    id: su_bitti_algisi
+    icon: mdi:water-off-outline
     entity_category: diagnostic
     restore_mode: RESTORE_DEFAULT_ON
     optimistic: true

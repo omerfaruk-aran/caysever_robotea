@@ -1,7 +1,13 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import sensor, switch, text_sensor, select
-from esphome.const import CONF_ID, CONF_SENSOR, CONF_ICON, UNIT_MINUTE
+from esphome.const import (
+    CONF_ID,
+    CONF_SENSOR,
+    CONF_ICON,
+    UNIT_MINUTE,
+    ENTITY_CATEGORY_DIAGNOSTIC,
+)
 
 CODEOWNERS = ["@omerfaruk-aran"]
 AUTO_LOAD = ["sensor", "switch", "select", "text_sensor"]
@@ -29,6 +35,9 @@ CONF_KONUSMA_SESI_SWITCH = "konusma_sesi_switch"
 CONF_SU_KONTROL_SWITCH = "su_kontrol_switch"
 CONF_CAY_TAZELIK_SENSOR = "cay_tazelik_sensor"
 CONF_CAY_TAZELIK_KALAN_SENSOR = "cay_tazelik_kalan_sensor"
+CONF_SU_BITTI_ALGISI_SWITCH = "su_bitti_algisi_switch"
+CONF_DEMLEME_HATTI_SENSOR = "demleme_hatti_sensor"
+CONF_OTOMATIK_KAPANMA = "otomatik_kapanma"
 
 CAY_DEMLEME_LEVEL_OPTIONS = [
     "1/4",
@@ -88,6 +97,14 @@ CAY_TAZELIK_KALAN_SCHEMA = sensor.sensor_schema(
     accuracy_decimals=0,
 )
 
+# Tanılama: demleme hattı girişinde (GPIO34) saniyede görülen kenar sayısı
+DEMLEME_HATTI_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement="kenar/sn",
+    icon="mdi:sine-wave",
+    accuracy_decimals=0,
+    entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+)
+
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -105,6 +122,11 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_BUTON_SESI_SWITCH): cv.use_id(switch.Switch),
         cv.Optional(CONF_KONUSMA_SESI_SWITCH): cv.use_id(switch.Switch),
         cv.Optional(CONF_SU_KONTROL_SWITCH): cv.use_id(switch.Switch),
+        # Demlemeyi fabrika yazılımındaki gibi "su bitti" algısıyla bitir (GPIO34). Verilmezse eski, süreli düzen.
+        cv.Optional(CONF_SU_BITTI_ALGISI_SWITCH): cv.use_id(switch.Switch),
+        cv.Optional(CONF_DEMLEME_HATTI_SENSOR): DEMLEME_HATTI_SCHEMA,
+        # Mod açıldıktan bu süre sonra cihaz kendini kapatır (fabrika yazılımında 2 saat). Verilmezse kapanmaz.
+        cv.Optional(CONF_OTOMATIK_KAPANMA): cv.positive_time_period_milliseconds,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -134,6 +156,17 @@ async def to_code(config):
     if CONF_SU_KONTROL_SWITCH in config:
         su_kontrol = await cg.get_variable(config[CONF_SU_KONTROL_SWITCH])
         cg.add(var.set_su_kontrol_switch(su_kontrol))
+
+    if CONF_SU_BITTI_ALGISI_SWITCH in config:
+        su_bitti = await cg.get_variable(config[CONF_SU_BITTI_ALGISI_SWITCH])
+        cg.add(var.set_su_bitti_algisi_switch(su_bitti))
+
+    if CONF_DEMLEME_HATTI_SENSOR in config:
+        hat_sens = await sensor.new_sensor(config[CONF_DEMLEME_HATTI_SENSOR])
+        cg.add(var.set_demleme_hatti_sensor(hat_sens))
+
+    if CONF_OTOMATIK_KAPANMA in config:
+        cg.add(var.set_otomatik_kapanma(config[CONF_OTOMATIK_KAPANMA]))
 
     for s in [
         CONF_SU_KAYNATMA,
