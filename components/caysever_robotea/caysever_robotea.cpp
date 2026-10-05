@@ -376,6 +376,46 @@ namespace esphome
             this->handle_touch_input_food_water();
             this->handle_touch_input_boiling_water();
             this->handle_touch_input_brew_tea();
+            this->handle_touch_input_filter_coffee();
+        }
+
+        // Tuş 2: filtre kahve aç/kapat (seviye yok). Tuş 1 ile birlikte basılı tutmak buton sesini açıp kapatan
+        // kısayoldur; o durumda ve uzun basışta mod değişmez. Karar tuş bırakılınca verilir.
+        void CayseverRobotea::handle_touch_input_filter_coffee()
+        {
+            static unsigned long touch_start_time = 0;
+            static bool birlikte = false; // basılıyken tuş 1 de basıldı
+
+            bool touch_value = digitalRead(this->touch_pins_[1]) == LOW;
+            bool touch1 = digitalRead(this->touch_pins_[0]) == LOW;
+
+            if (kettle_durumu_ == KRITIK)
+            {
+                this->previous_touch_states_[1] = touch_value;
+                birlikte = false;
+                return;
+            }
+
+            if (touch_value && !this->previous_touch_states_[1])
+            {
+                touch_start_time = this->current_time_;
+                birlikte = touch1;
+            }
+            else if (touch_value && touch1)
+            {
+                birlikte = true;
+            }
+            else if (!touch_value && this->previous_touch_states_[1])
+            {
+                if (!birlikte && !touch1 && this->current_time_ - touch_start_time < 1200)
+                {
+                    this->play_button_sound();
+                    this->update_filtre_kahve(!this->touch_states_[1]);
+                }
+                birlikte = false;
+            }
+
+            this->previous_touch_states_[1] = touch_value;
         }
 
         void CayseverRobotea::handle_touch_input_food_water()
@@ -464,14 +504,15 @@ namespace esphome
                 break;
 
             case MODE_CAY_DEMLEME:
-                // Fabrikadaki gibi: kaynatırken ve demlerken kırmızı, çay hazır olunca (sıcak tutma) beyaz
+            case MODE_FILTRE_KAHVE:
+                // Kaynatırken ve demlerken kırmızı, içecek hazır olunca (sıcak tutma) beyaz
                 if (this->cay_demleme_durumu_ == DEMLEME_HAZIRLIK || this->cay_demleme_durumu_ == DEMLEME_BASLADI)
                 {
-                    this->control_led(3, false);
+                    this->control_led(this->demleme_led_(), false);
                 }
                 else if (this->cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA)
                 {
-                    this->control_led(3, true);
+                    this->control_led(this->demleme_led_(), true);
                 }
                 break;
 
@@ -995,16 +1036,17 @@ namespace esphome
             }
         }
 
-        void CayseverRobotea::play_filtre_kahve_done_sound()
+        void CayseverRobotea::play_su_ekle_sound()
         {
             if (!this->konusma_sesi_switch_)
                 return;
 
             if (this->konusma_sesi_switch_->state)
-            { // Filtre kahve tamam sesi: GPIO19 ve GPIO32 HIGH, GPIO4 LOW
+            { // "Hazneye su ekle..." uyarısı: GPIO19 ve GPIO32 HIGH, GPIO4 LOW. Fabrika yazılımı bu klibi hata
+              // durumlarında çalar; filtre kahve bitince çalan klip çaydakiyle aynıdır ("içeceğiniz hazır").
                 this->activate_sound(std::map<int, bool>{
-                    {this->sound_pins_[0], false}, // GPIO4: HIGH
-                    {this->sound_pins_[1], true},  // GPIO19: LOW
+                    {this->sound_pins_[0], false}, // GPIO4: LOW
+                    {this->sound_pins_[1], true},  // GPIO19: HIGH
                     {this->sound_pins_[2], true}   // GPIO32: HIGH
                 });
             }
@@ -1410,7 +1452,7 @@ namespace esphome
                         this->brew_pump_ms_ = 0;
                         this->brew_cycle_started_ = false;
                         this->brew_set_relay_(true);
-                        this->control_led(3); // demleme sürerken lamba kırmızı; "çay hazır"da beyaza döner
+                        this->control_led(this->demleme_led_()); // demleme sürerken lamba kırmızı; hazır olunca beyaza döner
                         ESP_LOGI("CayseverRobotea", "Demleme: su bitti algısıyla yürütülüyor (üst sınır %u sn).", this->demleme_suresi_);
                     }
                     else
@@ -1421,10 +1463,13 @@ namespace esphome
                         }
                         this->brew_phase_ = BREW_TIMED;
                         this->brew_set_relay_(true); // Demleme rölesini aç
-                        this->control_led(3);        // Tuş 4 kırmızı LED
+                        this->control_led(this->demleme_led_()); // kırmızı
                     }
 
-                    this->play_cay_demleme_start_sound();
+                    if (this->kahve_())
+                        this->play_filtre_kahve_hazirlaniyor_sound();
+                    else
+                        this->play_cay_demleme_start_sound();
                 }
                 else if (temperature >= 93.0f)
                 {
@@ -1486,7 +1531,7 @@ namespace esphome
                         // 2 dakikalık dem alma süresini başlat
                         this->demleme_end_time_ = this->current_time_;
                     }
-                    else if (this->current_time_ - this->demleme_end_time_ >= 240000)
+                    else if (this->current_time_ - this->demleme_end_time_ >= (this->kahve_() ? KAHVE_DEMLENME_MS : 240000u))
                     {
                         this->finish_demleme_();
                     }
@@ -1504,7 +1549,7 @@ namespace esphome
                 {
                     unsigned long elapsed_time = this->current_time_ - this->demled_start_time_;
                     // 60 dakika = 3.600.000 ms
-                    if (elapsed_time >= TAZELIK_SURESI_MS)
+                    if (elapsed_time >= this->tazelik_ms_())
                     {
                         // tamamlandı, DemLED kapat ve BayLED'i aç
                         if (digitalRead(this->dem_led_pin_) != LOW)
@@ -1535,8 +1580,8 @@ namespace esphome
 
             ESP_LOGI("CayseverRobotea", "Çay demleme işlemi tamamlandı.");
 
-            // LED güncellemesi ve sesli uyarı
-            this->control_led(3, true);
+            // LED güncellemesi ve sesli uyarı ("hazır" klibi çay ve filtre kahve için ortaktır)
+            this->control_led(this->demleme_led_(), true);
             if (digitalRead(this->dem_led_pin_) != HIGH)
             {
                 digitalWrite(this->dem_led_pin_, HIGH);
@@ -1718,7 +1763,7 @@ namespace esphome
             }
 
             case BREW_STEEP:
-                if (now - this->brew_last_on_ms_ >= BREW_STEEP_MS)
+                if (now - this->brew_last_on_ms_ >= this->demlenme_ms_())
                 {
                     this->finish_demleme_();
                 }
@@ -1778,20 +1823,24 @@ namespace esphome
             digitalWrite(this->relay_pin_, LOW);
             this->relay_active_ = false;
             this->brew_failed_ = true;
+            const int led = this->demleme_led_();
 
             // Mod bir sonraki turda kapanır; o âna kadar bu karar yinelenmesin
             this->brew_phase_ = BREW_STEEP;
             this->brew_last_on_ms_ = this->current_time_;
             this->set_mode(MODE_KAPALI, 0);
 
-            this->uyari_baslat_(3);
+            this->uyari_baslat_(led, true);
         }
 
-        // Uyarı: üç bip; verilen tuşun lambası bip'lerle birlikte üç kez kırmızı yanıp söner. İlk adım, modun kapanıp
+        // Uyarı: verilen tuşun lambası üç kez kırmızı yanıp söner. Ses: su_ekle istenmiş ve "Konuşma Sesi" açıksa fabrika
+        // yazılımının bu durumda çaldığı "hazneye su ekle..." klibi (bir kez); değilse üç bip. İlk adım, modun kapanıp
         // lambaların söndüğü turdan ve tuşun/komutun kendi bip'inden sonraya bırakılır.
-        void CayseverRobotea::uyari_baslat_(int led)
+        void CayseverRobotea::uyari_baslat_(int led, bool su_ekle)
         {
             this->uyari_led_ = led;
+            this->uyari_su_ekle_ = su_ekle && this->konusma_sesi_switch_ != nullptr && this->konusma_sesi_switch_->state;
+            this->uyari_adim_no_ = 0;
             this->set_timeout("uyari_1a", 400, [this]()
                               { this->uyari_adimi_(true); });
             this->set_timeout("uyari_1k", 600, [this]()
@@ -1810,11 +1859,20 @@ namespace esphome
         {
             if (on)
             {
-                // Uyarı olduğu için "Buton Sesi" anahtarına bakılmaz (KRITIK alarmı gibi)
-                this->activate_sound(std::map<int, bool>{
-                    {this->sound_pins_[0], true},
-                    {this->sound_pins_[2], true},
-                    {this->sound_pins_[1], false}});
+                this->uyari_adim_no_++;
+                if (this->uyari_su_ekle_)
+                {
+                    if (this->uyari_adim_no_ == 1)
+                        this->play_su_ekle_sound();
+                }
+                else
+                {
+                    // Uyarı olduğu için "Buton Sesi" anahtarına bakılmaz (KRITIK alarmı gibi)
+                    this->activate_sound(std::map<int, bool>{
+                        {this->sound_pins_[0], true},
+                        {this->sound_pins_[2], true},
+                        {this->sound_pins_[1], false}});
+                }
             }
             // Lamba yalnız kettle yerindeyken ve araya yeni bir mod girmemişken oynatılır
             if (this->kettle_durumu_ != NORMAL || this->current_mode_ != MODE_KAPALI || this->uyari_led_ < 0)
@@ -1822,7 +1880,6 @@ namespace esphome
             this->control_led(on ? this->uyari_led_ : -1);
         }
 
-        // Mod açıldıktan otomatik_kapanma süresi sonra cihaz kendini kapatır (fabrika yazılımında 2 saat).
         void CayseverRobotea::check_auto_off_()
         {
             if (this->otomatik_kapanma_ms_ == 0 || this->current_mode_ == MODE_KAPALI || this->pending_mode_change_)
@@ -2108,6 +2165,27 @@ namespace esphome
             ESP_LOGI("CayseverRobotea", "on_mama_suyu_change %s", state ? "true" : "false");
             this->on_mama_suyu_change(state); });
         }
+        void CayseverRobotea::set_filtre_kahve_switch(switch_::Switch *filtre_kahve_switch)
+        {
+            this->filtre_kahve_switch_ = filtre_kahve_switch;
+            this->filtre_kahve_switch_->add_on_state_callback([this](bool state)
+                                                              {
+            ESP_LOGI("CayseverRobotea", "on_filtre_kahve_change %s", state ? "true" : "false");
+            this->on_filtre_kahve_change(state); });
+        }
+
+        void CayseverRobotea::update_filtre_kahve(bool filtre_kahve)
+        {
+            if (filtre_kahve)
+            {
+                this->set_mode(MODE_FILTRE_KAHVE, 0);
+            }
+            else
+            {
+                this->set_mode(MODE_KAPALI, 0);
+            }
+        }
+
         void CayseverRobotea::update_su_kaynatma(bool su_kaynatma)
         {
             if (su_kaynatma)
@@ -2143,6 +2221,8 @@ namespace esphome
                 return "MAMA_SUYU";
             case MODE_CAY_DEMLEME:
                 return "CAY_DEMLEME";
+            case MODE_FILTRE_KAHVE:
+                return "FILTRE_KAHVE";
             }
             return "KAPALI";
         }
@@ -2215,6 +2295,7 @@ namespace esphome
                     break;
                 }
                 case MODE_CAY_DEMLEME:
+                case MODE_FILTRE_KAHVE:
                 {
                     switch (this->cay_demleme_durumu_)
                     {
@@ -2267,7 +2348,8 @@ namespace esphome
                 if (this->demled_active_)
                 {
                     uint32_t gecen = this->current_time_ - this->demled_start_time_;
-                    uint32_t kalan_ms = gecen < TAZELIK_SURESI_MS ? TAZELIK_SURESI_MS - gecen : 0;
+                    const uint32_t taze_ms = this->tazelik_ms_();
+                    uint32_t kalan_ms = gecen < taze_ms ? taze_ms - gecen : 0;
                     durum = 2; // Taze
                     kalan = (kalan_ms + 59999) / 60000; // yukarı yuvarla: son dakikada 1 göster
                 }
@@ -2346,6 +2428,8 @@ namespace esphome
                     this->su_kaynatma_switch_->publish_state(false);
                 if (this->mama_suyu_switch_ && this->mama_suyu_switch_->state)
                     this->mama_suyu_switch_->publish_state(false);
+                if (this->filtre_kahve_switch_ && this->filtre_kahve_switch_->state)
+                    this->filtre_kahve_switch_->publish_state(false);
                 if (this->cay_demleme_select_ != nullptr && this->cay_demleme_select_->current_option() != "KAPALI")
                     this->cay_demleme_select_->publish_state("KAPALI");
             }
@@ -2389,6 +2473,12 @@ namespace esphome
 
                     publish_demleme_switch(false);
                 }
+                break;
+
+            case MODE_FILTRE_KAHVE:
+                this->reset_all_operations(false);
+                if (this->filtre_kahve_switch_)
+                    this->filtre_kahve_switch_->publish_state(false);
                 break;
 
             case MODE_KAPALI:
@@ -2448,6 +2538,21 @@ namespace esphome
                     this->mama_suyu_switch_->publish_state(true);
 
                 break;
+
+            case MODE_FILTRE_KAHVE:
+            {
+                // Çayla aynı düzenek; seviye yok. Su bitti algısı yoksa pompalama MAX'ın süresi kadar sürer.
+                this->touch_states_[1] = true;
+                this->set_demleme_suresi_for_level_(1);
+                this->control_led(1);
+                this->demleme_fb_.active = false;
+                this->demleme_fb_end_ms_ = this->current_time_; // başlangıç konuşması tuş/komut bip'inin üstüne binmesin
+                ESP_LOGI("CayseverRobotea", "Filtre kahve işlemi başlıyor.");
+                this->cay_demleme_durumu_ = DEMLEME_HAZIRLIK;
+                if (this->filtre_kahve_switch_)
+                    this->filtre_kahve_switch_->publish_state(true);
+                break;
+            }
 
             case MODE_CAY_DEMLEME:
                 this->touch_states_[3] = true;

@@ -68,7 +68,9 @@ caysever_robotea:
     name: Mama Suyu
   su_kaynatma_switch:
     name: Su Kaynatma
-  #filtre_kahve: true
+  # Filtre kahve (tuş 2): çay demlemeyle aynı düzenek; su bitince 2 dk sonra hazır, 40 dk tazelik.
+  filtre_kahve_switch:
+    name: Filtre Kahve
   cay_demleme:
     name: "Çay Demleme"
   buton_sesi_switch: buton_sesi

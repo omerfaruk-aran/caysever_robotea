@@ -28,7 +28,7 @@ CONF_MODE_STATE_SENSOR = "mode_state_sensor"
 CONF_CAY_DEMLEME = "cay_demleme"
 CONF_CAY_DEMLEME_MAX_SWITCH = "cay_demleme_max_switch"
 CONF_SU_KAYNATMA = "su_kaynatma_switch"
-# CONF_FILTRE_KAHVE = "filtre_kahve" //TODO
+CONF_FILTRE_KAHVE = "filtre_kahve_switch"
 CONF_MAMA_SUYU = "mama_suyu_switch"
 CONF_BUTON_SESI_SWITCH = "buton_sesi_switch"
 CONF_KONUSMA_SESI_SWITCH = "konusma_sesi_switch"
@@ -64,6 +64,12 @@ MAMA_SUYU_SCHEMA = (
     switch.switch_schema(CayseverRoboteaSwitch)
     .extend(cv.COMPONENT_SCHEMA)
     .extend({cv.Optional(CONF_ICON, default="mdi:baby-bottle-outline"): cv.icon})
+)
+
+FILTRE_KAHVE_SCHEMA = (
+    switch.switch_schema(CayseverRoboteaSwitch)
+    .extend(cv.COMPONENT_SCHEMA)
+    .extend({cv.Optional(CONF_ICON, default="mdi:coffee-maker-outline"): cv.icon})
 )
 
 CAY_DEMLEME_SCHEMA = select.select_schema(CayseverRoboteaSelect).extend(
@@ -113,6 +119,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Required(CONF_SENSOR): cv.use_id(sensor.Sensor),
         cv.Optional(CONF_SU_KAYNATMA): SU_KAYNATMA_SCHEMA,
         cv.Optional(CONF_MAMA_SUYU): MAMA_SUYU_SCHEMA,
+        # Filtre kahve (tuş 2): çay demlemeyle aynı düzenek; su bitince 2 dk sonra hazır, 40 dk tazelik.
+        cv.Optional(CONF_FILTRE_KAHVE): FILTRE_KAHVE_SCHEMA,
         cv.Optional(CONF_CAY_DEMLEME): CAY_DEMLEME_SCHEMA,
         cv.Optional(CONF_CAY_DEMLEME_MAX_SWITCH): CAY_DEMLEME_MAX_SWITCH_SCHEMA,
         cv.Optional(CONF_ACTIVE_MODE_SENSOR): AKTIF_MOD_SCHEMA,
@@ -177,6 +185,7 @@ async def to_code(config):
     for s in [
         CONF_SU_KAYNATMA,
         CONF_MAMA_SUYU,
+        CONF_FILTRE_KAHVE,
         CONF_CAY_DEMLEME_MAX_SWITCH,
     ]:
         if s in config:

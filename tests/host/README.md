@@ -144,8 +144,25 @@ modelde 32 °C'den 1,0 dk'da, 9 sn'lik en uzun vuruşla "hazır" deyip suyu 44,7
 | `./run.sh mama-tarama` — 6 su miktarı (~0,15–1,5 L) × 5 başlangıç sıcaklığı | — | 30 durumun hepsinde hazırdan 1 dk sonra su 38,4–40,6 °C, en yüksek 40,7 °C; hazır olma 0,8–7,7 dk |
 | **Toplam (bütün senaryolar)** | **45 / 50** | **50 / 50** |
 
+### Filtre kahve (tuş 2) ve "hazneye su ekle" uyarısı
+
+"Önce" = yukarıdaki "sonra" (filtre kahve modu yoktu; tuş 2 tek başına hiçbir şey yapmıyordu). Akış fabrika yazılımından
+okundu: çayla aynı düzenek, hazır anonsu su bittikten 120 sn sonra, tazelik 40 dk. Fabrikanın hata durumlarında çaldığı
+klibin (pin 19 + 32) "hazneye su ekle…" dediği gerçek cihazda dinlendi; demleme yapılamadığında artık o çalıyor.
+
+| Senaryo | Önce | Sonra |
+|---|---|---|
+| `kahve-su-bitince` — üst haznede 200 sn'lik su, Home Assistant'tan | mod yok | lamba ısıtırken ve demlerken kırmızı, hazırda beyaz; "filtre kahveniz hazırlanıyor" ve "hazır" birer kez; röle su bitince bırakılıyor; son çekilişten 120 sn sonra hazır; 40 dk sonra Bayat |
+| `kahve-sureli` — girişte işaret yok | mod yok | röle 430 sn, bırakıldıktan 120 sn sonra hazır |
+| `kahve-tus` — cihazdaki tuş 2 | hiçbir şey olmuyor | kısa basış açıyor, yeniden basış kapatıyor; tuş 1 + tuş 2 kısayolu (buton sesi) ve uzun basış modu değiştirmiyor |
+| `kahve-bos-hazne` — üst hazne boş | mod yok | 46 sn'de her şey kapanıyor, "Demlenemedi", kahve lambası üç kez yanıp sönüyor, "hazneye su ekle" klibi |
+| `kahve-gecis` — kahve ↔ çay geçişi, KRITIK'te komut | mod yok | biri açılınca diğeri kapanıyor; KRITIK'te reddediliyor |
+| `cay-bos-hazne` — çay, üst hazne boş, konuşma açık | üç bip | "hazneye su ekle" klibi bir kez, bip yok |
+| `cay-bos-hazne-sessiz` — aynısı, konuşma kapalı | üç bip | üç bip (değişmedi) |
+| **Toplam (bütün senaryolar)** | **50 / 56** | **56 / 56** |
+
 `SRC=<eski sürüm> ./run.sh` ile eski sürümler de derlenebilir: bu sürümdeki seçenekler `CAYSEVER_ROBOTEA_SU_BITTI_ALGISI`,
-`CAYSEVER_ROBOTEA_SES_DENEME` ve `CAYSEVER_ROBOTEA_MAMA_FABRIKA` işaretleriyle korunur.
+`CAYSEVER_ROBOTEA_SES_DENEME`, `CAYSEVER_ROBOTEA_MAMA_FABRIKA` ve `CAYSEVER_ROBOTEA_FILTRE_KAHVE` işaretleriyle korunur.
 
 **Tarama** (`./run.sh tarama`): 14 ısınma hızı (1.0–6.0 °C/sn) × 4 örnekleme fazı × 3 profil (doğrusal, hızlanan,
 ±0.3 °C gürültülü) = 168 temiz ısınma durumu. Karar ve alarm anı iki sürümde **168/168 aynı** (144'ünde alarm). Yani
