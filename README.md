@@ -28,13 +28,24 @@ Proje kapsamında cihaz üzerinde yapılan değişiklikler, cihazın garanti kap
 - Fabrika yazılımındaki gibi: demleme rölesi 10 sn'de bir kısa süre bırakılır ve **GPIO34** girişinde şebeke işareti
   kalıp kalmadığına bakılır. İşaret kesildiyse üst haznedeki su bitmiştir; röle bırakılır, su bittikten 15 dk sonra
   "çay demlendi" denir. Pompalama hiçbir durumda seçilen seviyenin süresini aşmaz.
-- Üst hazne boşsa (~47 sn'de anlaşılır) demlenme beklenmeden sıcak tutmaya ve tazelik sayacına geçilir.
+- Su aktarımı daha ilk dakikada biterse (üst hazne boş ya da su ısıtıcıya ulaşmıyor; ~47 sn'de anlaşılır) demleme
+  **yapılamadı** sayılır: her şey kapanır, üç bip çalar, çay lambası üç kez yanıp söner, tazelik sensörü yeni bir mod
+  başlatılana kadar "Demlenemedi" gösterir. Fabrika yazılımı da bu durumu hata sayar.
 - Yaml'da `su_bitti_algisi_switch` ile açılır; anahtar kapatılırsa ya da girişte hiç işaret görülmezse demleme eski,
   süreli düzenle yürür. `demleme_hatti_sensor` tanılama sensörü girişteki kenar sayısını gösterir.
 - Ayrıntı: [docs/fabrika-yazilimi.md](docs/fabrika-yazilimi.md).
 
 ### ⏱️ **Kendiliğinden Kapanma (isteğe bağlı)**
 - `otomatik_kapanma: 2h` — mod açıldıktan bu süre sonra cihaz kendini kapatır (fabrika yazılımında 2 saat).
+- `mama_suyu_sicak_tutma: 1h` — mama suyu "hazır" olduktan bu süre sonra mod kapanır.
+
+### 🍼 **Mama Suyu**
+- Hedef 40 °C. Sensör kettle tabanında ve ısıtıcının 15–20 sn gerisinden geldiği için su "vur, bekle, ölç" ile ısıtılır:
+  kısa bir vuruş, 40 sn bekleme, vuruşun suyu kaç derece ısıttığı ölçülür ve sonraki vuruş buna göre boyutlanır.
+- "Mama suyu hazır" yalnız oturmuş okuma 39–41,5 °C arasındayken söylenir. Hazırken okuma 38 °C'nin altına inince
+  yeniden ısıtılır.
+- Su zaten sıcaksa (okuma > 45 °C) mod **başlamaz**: üç bip, mama lambası üç kez yanıp söner.
+- Fabrika yazılımının mama suyu düzeni ve ölçümler: [docs/fabrika-yazilimi.md](docs/fabrika-yazilimi.md).
 
 ### 🔄 **Kettle Koruma Modu**
 - Kettle kaldırıldığında geçici koruma modu.
@@ -43,6 +54,10 @@ Proje kapsamında cihaz üzerinde yapılan değişiklikler, cihazın garanti kap
 ### 🔊 **Sesli ve Görsel Geri Bildirim**
 - **Buton Sesi:** Kullanıcı geri bildirimi için dokunmatik buton sesleri.  
 - **Konuşma Sesi:** İşlemlerin durumuna göre sesli uyarılar.  
+- **Çay lambası:** tuşa basılınca kırmızı, demleme bitince beyaz. Tek basışta (MAX) tek bip; 2–4 basışta seviye
+  beyaz yanıp sönmeyle gösterilir.
+- **Ses denemesi (isteğe bağlı):** `id(caysever).ses_dene(maske)` ses çipindeki klipleri doğrudan çalar; örneği
+  `example.yaml`'ın sonunda.
 
 ### 🌐 **Home Assistant Entegrasyonu**
 - ESPHome ile cihazınızı akıllı ev sistemleriyle entegre edin.

@@ -73,10 +73,10 @@ duyuldu). O cihazdaki sürüm "su yok" kararını bir sonraki sıcaklık okumas�
 
 | Senaryo | Önce | Sonra |
 |---|---|---|
-| `cay-su-bitince` — üst haznede 200 sn'lik su | röle 430 sn açık (230 sn'si kuruda), 11,2 dk'da "demlendi" | 16 sn kesintisiz, sonra 10 sn açık + 0,24 sn ölçüm; röle su bitip termostat açınca bırakılıyor (246 sn); son çekilişten 900 sn sonra "demlendi"; lamba kaynayınca beyaz |
-| `cay-bos-hazne` — üst hazne boş | demleme rölesi 430 sn açık, sonra "demlendi" | 47 sn'de anlaşılıyor; "çay demlendi" sesi, sıcak tutma, Taze; mod 2 saatte kapanıyor |
+| `cay-su-bitince` — üst haznede 200 sn'lik su | röle 430 sn açık (230 sn'si kuruda), 11,2 dk'da "demlendi" | 16 sn kesintisiz, sonra 10 sn açık + 0,24 sn ölçüm; röle su bitip termostat açınca bırakılıyor (246 sn); son çekilişten 900 sn sonra "demlendi"; lamba demlerken kırmızı, "demlendi"de beyaz |
+| `cay-bos-hazne` — üst hazne boş | demleme rölesi 430 sn açık, sonra "demlendi" | 47 sn'de anlaşılıyor (o sürümde "çay demlendi" + sıcak tutma; sonradan hata sayıldı, aşağıda) |
 | `replay-3eki-bos` — gerçek cihaz kaydı | — | yukarıdaki doğruluk ölçümü |
-| `cay-sicak-su-konusma` — su kaynamışken çay tuşu (algılı düzen) | — | konuşma kesilmiyor, lamba beyaz |
+| `cay-sicak-su-konusma` — su kaynamışken çay tuşu (algılı düzen) | — | konuşma kesilmiyor, lamba kırmızı |
 | `cay-kettle-kaldir-demlerken` — kettle su aktarımı sırasında kaldırılıyor | — | demleme iptal olmuyor, kettle yokken su aktarılmıyor, geri konunca sürüyor |
 | `cay-ust-sinir` — hatta işaret hiç kesilmiyor | — | pompalama seçilen seviyenin süresinde (430 sn + en çok bir döngü) duruyor |
 | `cay-algi-yok` — girişte hiç işaret yok | — | süreli düzen birebir (430 + 240 sn, lamba kırmızı) |
@@ -86,8 +86,66 @@ duyuldu). O cihazdaki sürüm "su yok" kararını bir sonraki sıcaklık okumas�
 | `otomatik-kapanma-yok` — seçenek verilmemiş | 3 saat sonra da açık | aynı |
 | **Toplam (bütün senaryolar)** | **24 / 36** | **36 / 36** |
 
-`SRC=<eski sürüm> ./run.sh` ile eski sürümler de derlenebilir: bu sürümdeki seçenekler `CAYSEVER_ROBOTEA_SU_BITTI_ALGISI`
-işaretiyle korunur.
+### "Su yok" sabit sınırı (106 → 115 °C)
+
+| Senaryo | Önce (106 °C) | Sonra (115 °C) |
+|---|---|---|
+| `replay-3eki-kaynatma` — gerçek cihaz kaydı: ~1 L soğuk su, kaynarken taban okuması 106,4 °C'yi görüyor | "su yok" KRITIK'i 13:33:20'de (cihazla aynı saniye) | alarm yok; 13:33:30'da sıcak tutma ve "su kaynadı" |
+| `kuru-sicak-tutmada` — sıcak tutmada kettle kuru (6 °C/sn) | 106,5 °C okumasında kesiyor | 118,5 °C okumasında kesiyor (bir okuma, 2 sn sonra) |
+| `az-su`, `kuru` — eğim kontrolü | 7.0 sn | 7.0 sn (değişmedi; tarama 168/168 aynı) |
+| **Toplam (bütün senaryolar)** | **37 / 38** | **38 / 38** |
+
+### Ses tetiği ve çay lambasının sırası
+
+"Önce" = yukarıdaki "sonra". Gerçek bir cihazda kaynatma bitiminde "su kaynadı" tetiği verildiği hâlde ses çipi
+konuşmadı (tetik 10 ms'lik, ısıtıcı rölesinin bırakıldığı anda); fabrika yazılımı tetiği 50 ms tutuyor. Çay lambası
+fabrika yazılımında tuşa basılınca kırmızı yanar, demleme bitince beyaza döner.
+
+| Senaryo | Önce | Sonra |
+|---|---|---|
+| `ses-tetik-suresi` — kaynatma biter, "su kaynadı" tetiği | 20 ms (10 ms'lik zamanlayıcı, düzeneğin adımı 20 ms) | 60 ms (50 ms'lik zamanlayıcı); `ses_dene()` yedi deseni de veriyor |
+| `cay-lamba-sirasi` — çay tuşuna bir kez basılır, çay demlenir | tuş bırakıldıktan 1,66 sn sonra kırmızı; sıra: beyaz → sönük → kırmızı → (kaynayınca) beyaz; iki bip | 20 ms sonra kırmızı; "demlendi"ye kadar hep kırmızı, sonra beyaz; tek bip |
+| `cay-lamba-seviye` — üç basış (2/4), sonra Home Assistant'tan MAX | üç beyaz yanıp sönme, sonra kırmızı; MAX'ta da bir beyaz yanıp sönme ve iki bip | üç beyaz yanıp sönme + onay bip'i duruyor; MAX'ta yanıp sönme yok, tek bip |
+| `cay-ha-sicak-su` — su kaynamışken Home Assistant'tan MAX | bip, 0,5 sn sonra ikinci bip, 0,6 sn sonra konuşma | bip, 0,6 sn sonra konuşma |
+| `cay-fazla-basis` — beş basış | mod başlamıyor | mod başlamıyor, ilk basışta yanan lamba sönüyor |
+| `kritik-bekleyen-basis` — çay tuşuna basıldıktan sonraki 1 sn içinde KRITIK | alarm onaylanınca çay modu **kendiliğinden başlıyor**, ısıtıcı açılıyor | basış unutuluyor; onaydan sonra cihaz boşta |
+| `cay-su-bitince`, `cay-sicak-su-konusma` — algılı düzende lamba | kaynayınca beyaz | demlerken kırmızı |
+| **Toplam (bütün senaryolar)** | **36 / 44** | **44 / 44** |
+
+### İlk dakikada biten demleme: "çay demlendi" yerine hata
+
+"Önce" = yukarıdaki "sonra". Su aktarımı ilk dakikada bitiyorsa çay demlenmemiştir: üst hazne boştur ya da su demleme
+ısıtıcısına ulaşmıyordur (cihaz ikisini ayıramaz). Fabrika yazılımı bunu hata sayar.
+
+| Senaryo | Önce | Sonra |
+|---|---|---|
+| `cay-bos-hazne` — üst hazne boş | 47 sn'de "çay demlendi", sıcak tutma, Taze | 47 sn'de her şey kapanıyor: üç bip, çay lambası üç kez kırmızı, tazelik "Demlenemedi"; su soğuyunca ısıtıcı açılmıyor; yeni mod başlayınca "Demlenemedi" siliniyor |
+| `cay-az-su` — üst haznede 30 sn'lik su | — | aktarım ilk dakikayı aşıyor: demlenme bekleniyor, "çay demlendi", Taze |
+| **Toplam (bütün senaryolar)** | **44 / 45** | **45 / 45** |
+
+### Mama suyu: sıcak suyla başlamaz, 40 °C'yi "vur, bekle, ölç" ile tutturur
+
+"Önce" = yukarıdaki "sonra". Eski hâlinde mama suyu sıcaklığa bakmadan başlıyordu: gerçek bir cihazda su 100 °C'yken
+tuşa basılınca doğrudan "mama suyu hazır" dendi. Ayrıca okumaya bakarak kesmek, sensör ısıtıcının gerisinden geldiği
+için suyu taşırıyor.
+
+**Isıl modelin doğruluğu:** `ThermalLag` gerçek cihaz ölçümlerine göre kuruldu (8 sn ölü zaman, vuruştan ~15 sn sonra
+tepe, ~40 sn'de oturma; ~0,65 L için vuruş saniyesi başına 0,7 °C). Fabrika tablosunu röleyle uygulayan ara sürüm bu
+modelde 32 °C'den 1,0 dk'da, 9 sn'lik en uzun vuruşla "hazır" deyip suyu 44,7 °C'de bırakıyor; aynı sürüm cihazda
+32 °C'den 70 sn'de "hazır" dedi ve su 44–45 °C'de kaldı.
+
+| Senaryo | Önce | Sonra |
+|---|---|---|
+| `mama-sicak-su` — su 100 °C, mama suyu Home Assistant'tan ve tuştan | mod başlıyor, "mama suyu hazır" | mod başlamıyor: üç uyarı bip'i, mama lambası üç kez yanıp sönüyor, anahtar kapalıya dönüyor; 44 °C'de başlıyor |
+| `mama-kaldirilmisken-sicak` — mod kettle yokken başlatılıyor, kettle 90 °C suyla konuyor | "mama suyu hazır" | mod kapanıyor, üç bip, ısıtıcı hiç açılmıyor |
+| `mama-ilik` — su 43 °C | hemen "hazır" | ısıtmıyor; okuma 41,5 °C'nin altına inince "hazır" |
+| `mama-40` — 20 °C, ~0,65 L | okuma 40 °C'yi görünce 0,5 dk'da "hazır"; su 35,6 °C'de (okuma, ısıtıcı açıkken sudan önce yükseliyor); sıcak tutma 30–35 °C | 4 vuruş, 3,2 dk'da "hazır", su 38,9 °C, en yüksek 40,0 °C; sıcak tutmada 38 °C'nin altına inmiyor; hazırdan 1 saat sonra mod kapanıyor (`mama_suyu_sicak_tutma`) |
+| `mama-yeniden` — hazırken okuma 34 °C'ye düşüyor | sıcak tutma bandı içinde sayılıyor | baştan ısıtılıyor, lamba kırmızı; hazır olunca ikinci anons |
+| `./run.sh mama-tarama` — 6 su miktarı (~0,15–1,5 L) × 5 başlangıç sıcaklığı | — | 30 durumun hepsinde hazırdan 1 dk sonra su 38,4–40,6 °C, en yüksek 40,7 °C; hazır olma 0,8–7,7 dk |
+| **Toplam (bütün senaryolar)** | **45 / 50** | **50 / 50** |
+
+`SRC=<eski sürüm> ./run.sh` ile eski sürümler de derlenebilir: bu sürümdeki seçenekler `CAYSEVER_ROBOTEA_SU_BITTI_ALGISI`,
+`CAYSEVER_ROBOTEA_SES_DENEME` ve `CAYSEVER_ROBOTEA_MAMA_FABRIKA` işaretleriyle korunur.
 
 **Tarama** (`./run.sh tarama`): 14 ısınma hızı (1.0–6.0 °C/sn) × 4 örnekleme fazı × 3 profil (doğrusal, hızlanan,
 ±0.3 °C gürültülü) = 168 temiz ısınma durumu. Karar ve alarm anı iki sürümde **168/168 aynı** (144'ünde alarm). Yani
@@ -101,3 +159,8 @@ veriyor. Eşiğe dokunulmadı.
 
 Donanımın kendisi: rölenin gerçekten bırakması, sensör devresinin elektriksel davranışı, ESP32'nin açılıştaki pin
 durumları, ses çipi, Wi-Fi olayları. Bunlar yalnız cihazda görülür.
+
+Sıcaklık süzgeci: düzenek bileşene sıcaklığı doğrudan, 2 sn'de bir verir; `example.yaml`'daki ADC ortanca süzgeci
+(125 ms'de bir örnek, son 15 örneğin ortancası) modellenmez. Gerçek cihazda bileşenin gördüğü her değer son ~2 sn'nin
+ortancasıdır, yani güvenlik kararları (eğim, 115 °C, 120 °C) en çok bir okuma aralığı kadar gecikmiş veriyle verilir;
+senaryolardaki "bir okuma (2 sn) gecikir" payı bunu da kapsar.

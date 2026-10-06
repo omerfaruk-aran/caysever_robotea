@@ -45,6 +45,10 @@ demleme ısıtıcısı ve termostatı gövdede, kettle'ın yerinde olması bu gi
 - Ana döngü ~20 ms'de bir döner (FreeRTOS 100 Hz, `vTaskDelay(2)`).
 - NTC: ~0,35 sn'de bir sıcaklık (250 ms bekleme + 10 ms arayla 10 örnek; 2.–5. örneklerin ortalaması), **tam sayı °C**.
   10 °C ve üstü düşüş ancak art arda 3 ölçümde görülürse kabul edilir (sıçrama süzgeci). Yükseliş hemen kabul edilir.
+- Sıcaklık hesabı: `R = v_mV × 31600 / (3300 − v_mV)`, `T = 1 / (ln(R / 100785) / 3950 + 1/298,15) − 273,15`.
+  `example.yaml`'daki değerlerle (bölücü 10 kΩ, R25 = 34 kΩ, B = 3950) aynı gerilimde fabrika yaklaşık 2,2 °C daha
+  düşük okur: fabrikanın 85 / 90 / 96 / 115 °C eşikleri bileşenin okumasında 87,1 / 92,1 / 98,2 / 117,5 °C'ye denk gelir
+  (hesaptan çıkarım; iki yazılımın gerilim okuması aynı sayıldı).
 - Kettle yerinde mi: ham ADC değeri 10–1010 aralığı dışındaysa "kettle yok" → bütün lambalar söner; geri konunca
   lambalar eski hâline döner, kuru çalışma ölçümü yeniden başlar.
 
@@ -66,9 +70,37 @@ demleme ısıtıcısı ve termostatı gövdede, kettle'ın yerinde olması bu gi
 Demleme ve bekleme boyunca kettle ısıtıcı "sıcak tut" düzeninde çalışır (§5). Çay lambası: su 85 °C'nin üstünde ve
 kaynamışsa beyaz, 85 °C ve altına düşünce kırmızı (yeniden ısıtıyor).
 
+> **Gözlemle çelişiyor (çözülmedi).** Cihazı fabrika yazılımıyla kullanan birinin hatırladığı ve bileşenin süreli
+> düzeninde de olan davranış: lamba kaynatırken ve **demlerken kırmızı**, "çay demlendi" denince beyaz. Kod yeniden
+> okundu ve yukarıdaki gibi (kaynayınca beyaz; sıcaklık ≤ 85 °C ise kırmızı). Fabrika yazılımlı bir cihazda
+> doğrulanana kadar bileşen gözlemi izler: iki düzende de demleme bitene kadar kırmızı.
+
 Filtre kahve (tuş 2) aynı düzenektir; farkları: başlangıç konuşması ses 2, su bittikten sonra bekleme **120 sn**,
 tazelik **40 dk**. Su kaynatma (tuş 3): kaynayınca ses 4; 85 °C'ye düşünce yeniden kaynatır; 2 saatte kapanır. Mama
 suyu (tuş 1): su 44 °C'den sıcaksa başlamaz (lamba yanıp söner, "hata 3"); hazır olunca ses 8.
+
+
+### Mama suyu (tuş 1)
+
+Sıcaklıklar fabrikanın kendi ölçeğinde; parantez içindekiler `example.yaml`'daki değerlerle bileşenin okuması (§2).
+Fabrika ısıtıcı işlevine verilen değer, diğer denetimlerde de kullanılan tam sayı sensör okumasıdır; sensör kettle
+tabanındadır. Tuşun üstünde 40 yazar; fabrika yazılımıyla suyun 45 okumasında kaç derecede kaldığı ölçülmedi.
+
+| Adım | Fabrika |
+|---|---|
+| Başlatma | su > 44 °C (45,6) ise başlamaz: mama lambası yanıp söner, "hata 3". Kettle yerinde değilse tuş yok sayılır |
+| Isıtma | röle yalnız 25 °C'ye (26,4) kadar; sonra GPIO16 vuruşları, 25 sn'lik çevrimde: ≤ 30 °C → 12 sn, ≤ 35 → 9, < 38 → 8, < 42 → 5, üstü 4 sn |
+| Hazır | okuma ≥ 45 °C (46,6): lamba değişir, ses 8 |
+| Sıcak tutma | okuma ≤ 38 °C (39,6) olunca vuruşla ısıtır. ≤ 35 °C'ye (36,5) düşerse baştan ısıtır, 45'e çıkınca yeniden ses 8 |
+| Kapanış | 2 saat |
+
+**Bileşen bu tabloyu kullanmaz.** Aynı tablo ısıtıcı rölesiyle (GPIO17) uygulanıp gerçek bir cihazda denendi: okuma
+46,6 °C'de "hazır" denildiğinde su 44–45 °C'deydi (32 °C'den başlayınca), 42 °C'den başlayınca okuma 52 °C'ye çıktı.
+Sensör ısıtıcının 15–20 sn gerisinden geliyor ve vuruştan sonra suyun üstüne taşıp ~40 sn'de oturuyor; röleyle tam
+güçte bu tablo suyu hedefin üstüne taşıyor. Fabrikada GPIO16 yolunun aynı gücü verip vermediği bilinmiyor (ölçülemedi).
+Bileşen bu yüzden tuşun üstünde yazan 40 °C'yi doğrudan hedefler: kısa vuruş, 40 sn bekleme, ölçüm; "hazır" yalnız
+oturmuş okuma 39–41,5 °C arasındayken. Fabrikadan alınanlar: sıcak suyla başlamama ve hazırken yeniden ısıtma.
+Kapanış için `mama_suyu_sicak_tutma` ile hazırdan sonraki süre ayrıca sınırlanabilir.
 
 ## 4. Demleme denetimi
 
@@ -128,9 +160,9 @@ Sessiz modda konuşmalar çalmaz, yerine bip çalar. Sessiz modu: tuş 4 + tuş 
 |---|---|---|
 | Demlemenin bitişi | GPIO34 ile "su bitti" | `su_bitti_algisi_switch` varsa aynı döngü; yoksa sabit süre: 430 / 330 / 240 / 150 sn (tuşa 1–4 basış) |
 | Su bittikten sonra bekleme | 900 sn | algıyla 900 sn; süreli düzende 240 sn |
-| Üst hazne boşken | ses 3, her şey kapanır, çay lambası kırmızı yanıp söner | algıyla ~47 sn'de anlaşılır; "çay demlendi" sesi, sıcak tutma ve tazelik (bilinçli fark: kullanıcıların alışkanlığı demlenmiş çayı yeniden ısıtmak için çay tuşuna basmak) |
+| Üst hazne boşken (ilk 60 sn'de bitti) | ses 3, her şey kapanır, çay lambası kırmızı yanıp söner | aynı mantık: ~47 sn'de anlaşılır, her şey kapanır, üç bip, çay lambası üç kez yanıp söner, tazelik "Demlenemedi" |
 | Çay tuşu | aç / kapat; seviye yok | kapalıyken 1–4 basış = seviye, açıkken basış = kapat |
-| Çay lambası | ısıtırken kırmızı, kaynayınca beyaz | algıyla aynı; süreli düzende demleme bitene kadar kırmızı |
+| Çay lambası | kodda: ısıtırken kırmızı, kaynayınca beyaz (gözlem farklı, §3'teki not) | tuşa basılınca kırmızı, demleme bitene kadar kırmızı, "çay demlendi"de beyaz |
 | Kendiliğinden kapanma | 2 saat | `otomatik_kapanma` ile (ör. `2h`) |
 | Kettle kaldırılınca lambalar | söner | söner |
 | Su yetersiz algısı | 25 sn'de 25 °C (bir kez) + 115 °C | 7 sn'lik pencerede 1,65 °C/sn (sürekli, sıçrama doğrulamalı) + 106 °C + 120 °C |

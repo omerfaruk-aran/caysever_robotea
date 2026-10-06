@@ -13,6 +13,9 @@
 
 // Bu sürümde demlemede "su bitti" algısı ve kendiliğinden kapanma var (sınama programı buna bakar).
 #define CAYSEVER_ROBOTEA_SU_BITTI_ALGISI 1
+#define CAYSEVER_ROBOTEA_SES_DENEME 1
+#define CAYSEVER_ROBOTEA_DEMLENEMEDI 1
+#define CAYSEVER_ROBOTEA_MAMA_FABRIKA 1
 
 namespace esphome
 {
@@ -85,10 +88,15 @@ namespace esphome
       void set_su_bitti_algisi_switch(switch_::Switch *sw) { this->su_bitti_algisi_switch_ = sw; }
       void set_demleme_hatti_sensor(sensor::Sensor *s) { this->demleme_hatti_sensor_ = s; }
       void set_otomatik_kapanma(uint32_t ms) { this->otomatik_kapanma_ms_ = ms; }
+      void set_mama_suyu_sicak_tutma(uint32_t ms) { this->mama_sicak_tutma_ms_ = ms; }
 
       void handle_global_state_reset();
       void reset_all_operations(bool global_reset);
       void visual_feedback_demleme_level(int level); // Görsel geri bildirim
+
+      // Tanılama: ses çipini doğrudan tetikler; "Buton Sesi" / "Konuşma Sesi" anahtarlarına bakmaz.
+      // mask: bit0 = 1. ses pini (GPIO4), bit1 = 2. ses pini (GPIO19), bit2 = 3. ses pini (GPIO32).
+      void ses_dene(uint8_t mask);
 
       void setup() override;
       void loop() override;
@@ -180,6 +188,7 @@ namespace esphome
       static constexpr uint32_t STEAM_BOOST_MS = 20 * 1000; // 20sn (0-60 arası güvenli)
       static constexpr float STEAM_BOOST_MAX_T = 103.0f;    // taban sıcaklığı tavanı (çok önemli)
       static constexpr float OVERHEAT_CUTOFF_T = 120.0f;    // fail-safe (bu mutlaka olmalı)
+      static constexpr float WL_STATIC_LIMIT_T = 115.0f;    // "su yok" sabit sınırı (fabrika yazılımındaki değer)
       bool steam_boost_enabled_{false};                     // bu kaynatmada boost var mı?
       static constexpr float STEAM_BOOST_START_T = 80.0f;   // başlarken NTC < 80 ise boost aktif
 
@@ -257,7 +266,7 @@ namespace esphome
       static constexpr uint32_t BREW_SENSE_SETTLE_MS = 40;   // röle kontağının bırakması için
       static constexpr uint32_t BREW_SENSE_WINDOW_MS = 200;  // ölçüm penceresi (fabrika ~150 ms)
       static constexpr uint32_t BREW_SENSE_MIN_EDGES = 6;    // fabrika eşiği: bundan az kenar = su bitti
-      static constexpr uint32_t BREW_EARLY_MS = 60000;       // döngünün ilk 60 sn'sinde biterse üst hazne boştu: demlenme beklenmez
+      static constexpr uint32_t BREW_EARLY_MS = 60000;       // döngünün ilk 60 sn'sinde biterse demleme yapılamadı sayılır (hata)
       static constexpr uint32_t BREW_STEEP_MS = 900000;      // fabrika: son röle açılışından 900 sn sonra çay hazır
       static constexpr uint32_t BREW_TRUST_MIN_RATE = 30;    // kenar/sn: güven için en az (6 kenar / 200 ms'nin karşılığı)
       static constexpr uint32_t BREW_STORM_RATE = 2000;      // kenar/sn: bunun üstü şebeke işareti olamaz
@@ -267,7 +276,49 @@ namespace esphome
       void handle_brew_cycle_();
       void brew_set_relay_(bool on);
       void brew_resume_after_koruma_();
-      void brew_empty_finish_();
+      void brew_fail_();                  // demleme yapılamadı: her şey kapanır, uyarı verilir
+      void uyari_baslat_(int led);        // üç bip; verilen tuşun lambası bip'lerle birlikte üç kez kırmızı yanıp söner
+      void uyari_adimi_(bool on);         // uyarının bir adımı: bip ve lamba
+      int uyari_led_{-1};
+
+      // --- Mama suyu: 40 °C'ye "vur, bekle, ölç" ile yaklaşılır ---
+      // Sensör kettle tabanındadır ve ısıtıcının 15–20 sn gerisinden gelir; ısıtıcı röleyle tam güçte çalıştığı için
+      // okumaya bakarak kesmek suyu hedefin üstüne taşırır (gerçek cihazda ölçüldü: 46,6 °C'de kesilince su 44–52 °C).
+      // Bu yüzden kısa bir vuruş yapılır, okuma oturana kadar beklenir, vuruşun suyu kaç derece ısıttığı ölçülür ve
+      // sonraki vuruş buna göre boyutlanır. "Hazır" yalnız oturmuş okuma hedef bandındayken söylenir.
+      static constexpr float MAMA_HEDEF_T = 40.0f;      // tuşun üstünde yazan sıcaklık
+      static constexpr float MAMA_HAZIR_ALT_T = 39.0f;  // oturmuş okuma bu ikisinin arasındaysa "mama suyu hazır"
+      static constexpr float MAMA_HAZIR_UST_T = 41.5f;  // üstündeyse soğuması beklenir, "hazır" denmez
+      static constexpr float MAMA_TUT_T = 38.0f;        // hazırken bunun altına inince ısıtılır
+      static constexpr float MAMA_YENIDEN_T = 35.0f;    // hazırken bunun altına inerse baştan ısıtılır, yeniden haber verilir
+      static constexpr float MAMA_BASLAMAZ_T = 45.0f;   // bundan sıcak suyla mod başlamaz (fabrika yazılımında 44 °C)
+      static constexpr uint32_t MAMA_OTURMA_MS = 40000; // vuruştan sonra okumanın oturması için bekleme
+      static constexpr uint32_t MAMA_ILK_BEKLEME_MS = 6000;
+      static constexpr float MAMA_VURUS_MIN_SN = 1.0f;
+      static constexpr float MAMA_VURUS_MAX_SN = 12.0f;
+      static constexpr float MAMA_KAZANC_ILK = 2.5f;    // °C / vuruş saniyesi; ilk vuruş az su varmış gibi boyutlanır
+      enum MamaFaz : uint8_t
+      {
+        MAMA_FAZ_OLC,   // okuma oturdu: karar ver
+        MAMA_FAZ_VURUS, // ısıtıcı açık
+        MAMA_FAZ_OTUR   // ısıtıcı kapalı, okumanın oturması bekleniyor
+      };
+      MamaFaz mama_faz_{MAMA_FAZ_OTUR};
+      uint32_t mama_faz_ms_{0};         // fazın başladığı an
+      uint32_t mama_bekleme_ms_{0};     // OTUR fazının süresi
+      uint32_t mama_vurus_ms_{0};       // süren / son vuruşun süresi
+      uint32_t mama_onceki_vurus_ms_{0}; // bir önceki vuruşun süresi (büyüme sınırı için; 0 = bu ısıtmanın ilk vuruşu)
+      float mama_vurus_oncesi_t_{0};    // son vuruştan önceki oturmuş okuma
+      float mama_kazanc_{MAMA_KAZANC_ILK}; // ölçülen °C / vuruş saniyesi
+      bool mama_ilk_okuma_{false};      // mod başladıktan sonraki ilk okuma daha değerlendirilmedi
+      bool mama_hazir_oldu_{false};     // bu modda en az bir kez "hazır" denildi
+      uint32_t mama_hazir_ms_{0};       // ilk "hazır" anı
+      uint32_t mama_sicak_tutma_ms_{0}; // yaml: hazır olduktan sonra mod bu kadar açık kalır (0 = ayrı sınır yok)
+      void mama_isitici_(bool on);
+      void mama_vurus_basla_(float t, float hedef);
+      void mama_otur_(uint32_t bekleme_ms);
+      void mama_reddet_(float t);
+      bool brew_failed_{false};           // son demleme yapılamadı; yeni bir mod başlatılana kadar tazelik sensöründe görünür
       void publish_brew_rate_(uint32_t rate, bool force = false);
       void finish_demleme_();
 
@@ -330,6 +381,10 @@ namespace esphome
       void set_demleme_suresi_for_level_(int level);
 
       uint32_t sound_pulse_token_{0};
+      // Ses çipinin tetik darbesi. Fabrika yazılımı pinleri 50 ms tutuyor. 10 ms'lik darbeyle bir cihazda
+      // kaynatma bitimindeki "su kaynadı" tetiği verildiği hâlde çip konuşmadı (tetik, ısıtıcı rölesinin
+      // bırakıldığı ana denk geliyor); süre fabrika değerine çekildi.
+      static constexpr uint32_t SOUND_PULSE_MS = 50;
 
       void on_su_kaynatma_change(bool state)
       {

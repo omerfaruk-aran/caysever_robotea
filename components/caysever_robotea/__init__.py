@@ -38,6 +38,7 @@ CONF_CAY_TAZELIK_KALAN_SENSOR = "cay_tazelik_kalan_sensor"
 CONF_SU_BITTI_ALGISI_SWITCH = "su_bitti_algisi_switch"
 CONF_DEMLEME_HATTI_SENSOR = "demleme_hatti_sensor"
 CONF_OTOMATIK_KAPANMA = "otomatik_kapanma"
+CONF_MAMA_SUYU_SICAK_TUTMA = "mama_suyu_sicak_tutma"
 
 CAY_DEMLEME_LEVEL_OPTIONS = [
     "1/4",
@@ -127,6 +128,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_DEMLEME_HATTI_SENSOR): DEMLEME_HATTI_SCHEMA,
         # Mod açıldıktan bu süre sonra cihaz kendini kapatır (fabrika yazılımında 2 saat). Verilmezse kapanmaz.
         cv.Optional(CONF_OTOMATIK_KAPANMA): cv.positive_time_period_milliseconds,
+        # Mama suyu "hazır" olduktan bu süre sonra mod kapanır. Verilmezse yalnız otomatik_kapanma geçerlidir.
+        cv.Optional(CONF_MAMA_SUYU_SICAK_TUTMA): cv.positive_time_period_milliseconds,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -167,6 +170,9 @@ async def to_code(config):
 
     if CONF_OTOMATIK_KAPANMA in config:
         cg.add(var.set_otomatik_kapanma(config[CONF_OTOMATIK_KAPANMA]))
+
+    if CONF_MAMA_SUYU_SICAK_TUTMA in config:
+        cg.add(var.set_mama_suyu_sicak_tutma(config[CONF_MAMA_SUYU_SICAK_TUTMA]))
 
     for s in [
         CONF_SU_KAYNATMA,

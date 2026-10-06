@@ -464,14 +464,13 @@ namespace esphome
                 break;
 
             case MODE_CAY_DEMLEME:
-                if (this->cay_demleme_durumu_ == DEMLEME_HAZIRLIK ||
-                    (this->cay_demleme_durumu_ == DEMLEME_BASLADI && this->brew_phase_ == BREW_TIMED))
+                // Fabrikadaki gibi: kaynatırken ve demlerken kırmızı, çay hazır olunca (sıcak tutma) beyaz
+                if (this->cay_demleme_durumu_ == DEMLEME_HAZIRLIK || this->cay_demleme_durumu_ == DEMLEME_BASLADI)
                 {
                     this->control_led(3, false);
                 }
-                else if (this->cay_demleme_durumu_ == DEMLEME_BASLADI || this->cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA)
+                else if (this->cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA)
                 {
-                    // Algılı düzende lamba fabrikadaki gibi: ısıtırken kırmızı, su kaynayınca beyaz
                     this->control_led(3, true);
                 }
                 break;
@@ -509,13 +508,17 @@ namespace esphome
         }
         void CayseverRobotea::handle_touch_input_brew_tea()
         {
-            if (kettle_durumu_ == KRITIK)
-            {
-                return;
-            }
             static unsigned long touch_start_time = 0;  // Tuş basılma başlangıç zamanı
             static unsigned long last_release_time = 0; // Son bırakma zamanı
             static int press_count = 0;                 // Bas çek sayacı
+
+            if (kettle_durumu_ == KRITIK)
+            {
+                // Alarmdan hemen önce yapılmış, henüz işlenmemiş basış unutulur; yoksa alarm onaylanınca
+                // çay modu kendiliğinden başlardı.
+                press_count = 0;
+                return;
+            }
 
             // Dokunmatik pinin durumu
             bool touch_value = digitalRead(this->touch_pins_[3]) == LOW;
@@ -553,6 +556,11 @@ namespace esphome
                     // Dokunma işlemi algılandı
                     press_count++;
                     last_release_time = this->current_time_;
+                    // Fabrikadaki gibi: tuşa basılır basılmaz lamba kırmızı (mod 1 sn'lik basış sayma süresi dolunca başlar)
+                    if (press_count == 1 && this->kettle_durumu_ == NORMAL)
+                    {
+                        this->control_led(3);
+                    }
                     ESP_LOGI("CayseverRobotea", "Çay Demleme bırakıldı (KAPALI). Bas çek sayısı: %d", press_count);
                 }
             }
@@ -565,6 +573,10 @@ namespace esphome
                     // 4'ten fazla basılma durumunda dikkate alma
                     ESP_LOGW("CayseverRobotea", "Çay Demleme için maksimum 4 dokunma dikkate alınabilir. Dokunma sayısı sıfırlandı.");
                     press_count = 0;
+                    if (this->kettle_durumu_ == NORMAL)
+                    {
+                        this->restore_mode_leds_(); // ilk basışta yakılan kırmızı geri alınır
+                    }
                 }
                 else
                 {
@@ -664,6 +676,17 @@ namespace esphome
             if (level > 4)
                 level = 4;
 
+            if (level == 1)
+            {
+                // Tek basış (MAX) fabrikadaki gibi: seviye bildirimi yok. Lamba kırmızı kalır, ikinci bir bip çalmaz
+                // (tuşun ya da Home Assistant komutunun bip'i zaten çaldı). Su zaten kaynamışsa demleme konuşması
+                // o bip'in üstüne binmesin diye aynı nefes payı bırakılır.
+                this->demleme_fb_.active = false;
+                this->demleme_fb_end_ms_ = this->current_time_;
+                return;
+            }
+
+            // 3/4, 2/4, 1/4 seçimlerinde seviye beyaz yanıp sönmeyle gösterilir, ardından onay bip'i çalar.
             this->demleme_fb_.active = true;
             this->demleme_fb_.level = level;
             this->demleme_fb_.blink_done = 0;
@@ -1002,6 +1025,15 @@ namespace esphome
             }
         }
 
+        void CayseverRobotea::ses_dene(uint8_t mask)
+        {
+            ESP_LOGI("CayseverRobotea", "Ses denemesi: maske %u", mask);
+            this->activate_sound(std::map<int, bool>{
+                {this->sound_pins_[0], (mask & 0x01) != 0},
+                {this->sound_pins_[1], (mask & 0x02) != 0},
+                {this->sound_pins_[2], (mask & 0x04) != 0}});
+        }
+
         void CayseverRobotea::activate_sound(const std::map<int, bool> &pin_states)
         {
             // Pinleri set et
@@ -1011,7 +1043,7 @@ namespace esphome
             }
 
             uint32_t token = ++this->sound_pulse_token_;
-            this->set_timeout("sound_off", 10, [this, token]()
+            this->set_timeout("sound_off", SOUND_PULSE_MS, [this, token]()
                               {
         // Aynı timeout ismi ile overwrite olacağı için genelde gerek yok ama güvenli kalsın
         if (token != this->sound_pulse_token_) return;
@@ -1044,97 +1076,175 @@ namespace esphome
 
             // NTC sensöründen sıcaklık oku
             float temperature = this->ntc_sensor_->state;
+            const uint32_t now = this->current_time_;
 
-            switch (this->mama_suyu_durumu_)
+            if (temperature >= OVERHEAT_CUTOFF_T)
             {
-            case MAMA_SUYU_HAZIRLIK:
-                if (temperature >= 40.0f)
+                ESP_LOGE("CayseverRobotea", "OVERHEAT! T=%.2fC. Röle kapatiliyor, KRITIK.", temperature);
+                this->enter_critical_();
+                return;
+            }
+
+            // Mod kettle kaldırılmışken başlatıldıysa sıcaklık ancak şimdi görülüyor: su zaten sıcaksa mod başlamaz.
+            if (this->mama_ilk_okuma_)
+            {
+                this->mama_ilk_okuma_ = false;
+                if (this->mama_suyu_durumu_ == MAMA_SUYU_HAZIRLIK && temperature > MAMA_BASLAMAZ_T)
                 {
-                    // 40°C'ye ulaşıldığında döngüyü tamamla
-                    if (digitalRead(this->relay_pin_) != LOW)
-                    {
-                        digitalWrite(this->relay_pin_, LOW);
-                    }
-                    this->relay_active_ = false;
-                    this->mama_suyu_durumu_ = MAMA_SUYU_SICAKLIK_KORUMA;
-                    this->update_all_sensors();
-
-                    if (!this->led_white_active_)
-                    {
-                        this->control_led(0, true);         // Tuş 1’in beyaz LED’ini yak
-                        this->led_white_active_ = true;     // Beyaz LED aktif duruma geçti
-                        this->play_mama_suyu_hazir_sound(); // Mama suyu hazırlandı sesi
-                    }
-
-                    ESP_LOGI("CayseverRobotea", "Mama suyu hazırlama tamamlandı, sıcaklık koruma moduna geçildi.");
+                    this->mama_reddet_(temperature);
+                    this->set_mode(MODE_KAPALI, 0);
+                    this->uyari_baslat_(0);
+                    return;
                 }
-                else if (temperature >= 33.0f)
+            }
+
+            const bool hazir = this->mama_suyu_durumu_ == MAMA_SUYU_SICAKLIK_KORUMA;
+            const uint32_t el = now - this->mama_faz_ms_;
+
+            switch (this->mama_faz_)
+            {
+            case MAMA_FAZ_VURUS:
+                // Vuruş süresi dolunca (ya da okuma beklenmedik biçimde hedefi epey geçtiyse) ısıtıcı kapanır
+                if (el >= this->mama_vurus_ms_ || temperature >= MAMA_HEDEF_T + 3.0f)
                 {
-                    if (!this->relay_active_ && (this->current_time_ - this->last_relay_toggle_time_ >= this->relay_wait_time_))
+                    this->mama_isitici_(false);
+                    this->mama_vurus_ms_ = el; // gerçekleşen süre
+                    this->mama_otur_(MAMA_OTURMA_MS);
+                }
+                else
+                {
+                    this->mama_isitici_(true); // kettle kaldırılıp konduysa röle bırakılmıştır
+                }
+                break;
+
+            case MAMA_FAZ_OTUR:
+                this->mama_isitici_(false);
+                if (el < this->mama_bekleme_ms_)
+                    break;
+                // Okuma oturdu. Son vuruşun suyu kaç derece ısıttığı ölçülür; sonraki vuruş buna göre boyutlanır.
+                if (this->mama_vurus_ms_ >= 1000)
+                {
+                    // Ölçülebilir bir artış yoksa (çok su, ısı kaybı) kazanç en küçük değere iner: vuruşlar büyür,
+                    // ama bir önceki vuruşun iki katından hızlı büyüyemez.
+                    float artis = temperature - this->mama_vurus_oncesi_t_;
+                    if (artis < 0.1f)
+                        artis = 0.1f;
+                    float k = artis / (this->mama_vurus_ms_ / 1000.0f);
+                    if (k < 0.2f)
+                        k = 0.2f;
+                    if (k > 4.0f)
+                        k = 4.0f;
+                    this->mama_kazanc_ = k;
+                    this->mama_onceki_vurus_ms_ = this->mama_vurus_ms_;
+                    this->mama_vurus_ms_ = 0;
+                }
+                this->mama_faz_ = MAMA_FAZ_OLC;
+                this->mama_faz_ms_ = now;
+                [[fallthrough]];
+
+            case MAMA_FAZ_OLC:
+                this->mama_isitici_(false);
+                if (!hazir)
+                {
+                    if (temperature >= MAMA_HAZIR_ALT_T)
                     {
-                        digitalWrite(this->relay_pin_, HIGH); // Röleyi aç
-                        this->relay_active_ = true;
-                        this->last_relay_toggle_time_ = this->current_time_;
-                        ESP_LOGI("CayseverRobotea", "Sıcaklık: %.2f°C, Röle tekrar açıldı.", temperature);
-                    }
-                    else if (this->relay_active_ && (this->current_time_ - this->last_relay_toggle_time_ >= this->relay_wait_time_))
-                    {
-                        if (digitalRead(this->relay_pin_) != LOW)
+                        if (temperature <= MAMA_HAZIR_UST_T)
                         {
-                            digitalWrite(this->relay_pin_, LOW);
+                            this->mama_suyu_durumu_ = MAMA_SUYU_SICAKLIK_KORUMA;
+                            this->update_all_sensors();
+                            this->control_led(0, true);         // Tuş 1’in beyaz LED’ini yak
+                            this->led_white_active_ = true;
+                            this->play_mama_suyu_hazir_sound(); // Mama suyu hazırlandı sesi
+                            if (!this->mama_hazir_oldu_)
+                            {
+                                this->mama_hazir_oldu_ = true;
+                                this->mama_hazir_ms_ = now;
+                            }
+                            ESP_LOGI("CayseverRobotea", "Mama suyu hazır (oturmuş okuma %.2f°C), sıcak tutmaya geçildi.", temperature);
                         }
-                        this->relay_active_ = false;
-                        this->last_relay_toggle_time_ = this->current_time_;
-                        ESP_LOGI("CayseverRobotea", "Sıcaklık: %.2f°C, Röle kapatıldı.", temperature);
+                        // Bandın üstündeyse su soğuyana kadar beklenir; "hazır" denmez
+                    }
+                    else
+                    {
+                        this->mama_vurus_basla_(temperature, MAMA_HEDEF_T);
                     }
                 }
                 else
                 {
-                    if (!this->relay_active_)
+                    if (temperature <= MAMA_YENIDEN_T)
                     {
-                        digitalWrite(this->relay_pin_, HIGH); // Röleyi aç
-                        this->relay_active_ = true;
-                        this->last_relay_toggle_time_ = this->current_time_;
-                        ESP_LOGI("CayseverRobotea", "Sıcaklık: %.2f°C, Röle açıldı.", temperature);
+                        // Su belirgin soğudu (ör. üstüne su eklendi): baştan ısıtılır, hazır olunca yeniden haber verilir
+                        this->mama_suyu_durumu_ = MAMA_SUYU_HAZIRLIK;
+                        this->update_all_sensors();
+                        this->control_led(0);
+                        this->led_white_active_ = false;
+                        this->mama_kazanc_ = MAMA_KAZANC_ILK; // su miktarı değişmiş olabilir
+                        this->mama_onceki_vurus_ms_ = 0;
+                        this->mama_otur_(MAMA_ILK_BEKLEME_MS);
+                        ESP_LOGI("CayseverRobotea", "Mama suyu soğudu (okuma %.2f°C), yeniden ısıtılıyor.", temperature);
+                    }
+                    else if (temperature <= MAMA_TUT_T)
+                    {
+                        this->mama_vurus_basla_(temperature, MAMA_HEDEF_T);
                     }
                 }
-                break;
-
-            case MAMA_SUYU_SICAKLIK_KORUMA:
-                this->maintain_temperature(30.0f, 35.0f);
-                if (this->kettle_durumu_ != NORMAL)
-                    return; // aşırı ısınma kesmesi her şeyi kapattı; bu turda başka iş yapma
-
-                if (temperature <= 30.0f)
-                {
-                    // Sıcaklık 30°C'nin altına düşerse röleyi tekrar aç
-                    if (!this->relay_active_ && (this->current_time_ - this->last_relay_toggle_time_ >= this->relay_wait_time_))
-                    {
-                        digitalWrite(this->relay_pin_, HIGH); // Röleyi aç
-                        this->relay_active_ = true;
-                        this->last_relay_toggle_time_ = this->current_time_;
-                        ESP_LOGI("CayseverRobotea", "Sıcaklık: %.2f°C, Röle tekrar açıldı (koruma).", temperature);
-                    }
-                }
-                else if (temperature >= 35.0f)
-                {
-                    // Sıcaklık 35°C'ye ulaştığında röleyi kapat
-                    if (this->relay_active_)
-                    {
-                        if (digitalRead(this->relay_pin_) != LOW)
-                        {
-                            digitalWrite(this->relay_pin_, LOW);
-                        }
-                        this->relay_active_ = false;
-                        this->last_relay_toggle_time_ = this->current_time_;
-                        ESP_LOGI("CayseverRobotea", "Sıcaklık: %.2f°C, Röle kapatıldı (koruma).", temperature);
-                    }
-                }
-                break;
-
-            default:
                 break;
             }
+
+            // Hazır olduktan sonra sıcak tutma süresi dolduysa mod kapanır (yaml: mama_suyu_sicak_tutma)
+            if (this->mama_hazir_oldu_ && this->mama_sicak_tutma_ms_ != 0 && !this->pending_mode_change_ &&
+                now - this->mama_hazir_ms_ >= this->mama_sicak_tutma_ms_)
+            {
+                ESP_LOGW("CayseverRobotea", "Mama suyu %u dakikadır hazır; mod kapatılıyor.", (unsigned)(this->mama_sicak_tutma_ms_ / 60000));
+                this->set_mode(MODE_KAPALI, 0);
+            }
+        }
+
+        void CayseverRobotea::mama_isitici_(bool on)
+        {
+            if ((digitalRead(this->relay_pin_) == HIGH) == on)
+            {
+                this->relay_active_ = on;
+                return;
+            }
+            digitalWrite(this->relay_pin_, on ? HIGH : LOW);
+            this->relay_active_ = on;
+            this->last_relay_toggle_time_ = this->current_time_;
+        }
+
+        // Vuruş: hedefe kalan farkın %80'i kadar ısıtacak süre. Kazanç (°C / vuruş saniyesi) önceki vuruştan ölçülür;
+        // ilk vuruşta az su varmış gibi davranılır. Süre bir önceki vuruşun iki katından fazla büyüyemez.
+        void CayseverRobotea::mama_vurus_basla_(float t, float hedef)
+        {
+            float sn = 0.8f * (hedef - t) / this->mama_kazanc_;
+            if (this->mama_onceki_vurus_ms_ != 0)
+            {
+                const float sinir = 2.0f * (this->mama_onceki_vurus_ms_ / 1000.0f) + 2.0f;
+                if (sn > sinir)
+                    sn = sinir;
+            }
+            if (sn < MAMA_VURUS_MIN_SN)
+                sn = MAMA_VURUS_MIN_SN;
+            if (sn > MAMA_VURUS_MAX_SN)
+                sn = MAMA_VURUS_MAX_SN;
+            this->mama_vurus_oncesi_t_ = t;
+            this->mama_vurus_ms_ = (uint32_t)(sn * 1000.0f);
+            this->mama_faz_ = MAMA_FAZ_VURUS;
+            this->mama_faz_ms_ = this->current_time_;
+            this->mama_isitici_(true);
+            ESP_LOGI("CayseverRobotea", "Mama suyu: okuma %.2f°C, %.1f sn vuruş (kazanç %.2f°C/sn).", t, sn, this->mama_kazanc_);
+        }
+
+        void CayseverRobotea::mama_otur_(uint32_t bekleme_ms)
+        {
+            this->mama_faz_ = MAMA_FAZ_OTUR;
+            this->mama_faz_ms_ = this->current_time_;
+            this->mama_bekleme_ms_ = bekleme_ms;
+        }
+
+        void CayseverRobotea::mama_reddet_(float t)
+        {
+            ESP_LOGW("CayseverRobotea", "Mama suyu başlatılmadı: su zaten sıcak (%.1f°C > %.1f°C).", t, MAMA_BASLAMAZ_T);
         }
 
         void CayseverRobotea::handle_su_kaynatma()
@@ -1300,7 +1410,7 @@ namespace esphome
                         this->brew_pump_ms_ = 0;
                         this->brew_cycle_started_ = false;
                         this->brew_set_relay_(true);
-                        this->control_led(3, true); // su kaynadı: lamba beyaz
+                        this->control_led(3); // demleme sürerken lamba kırmızı; "çay hazır"da beyaza döner
                         ESP_LOGI("CayseverRobotea", "Demleme: su bitti algısıyla yürütülüyor (üst sınır %u sn).", this->demleme_suresi_);
                     }
                     else
@@ -1597,7 +1707,7 @@ namespace esphome
                     ESP_LOGI("CayseverRobotea", "Demleme: hatta işaret yok (%u kenar), su bitmiş görünüyor (pompalama %u sn).", (unsigned)n, (unsigned)(this->brew_pump_ms_ / 1000));
                     if (now - this->brew_cycle_start_ms_ <= BREW_EARLY_MS)
                     {
-                        this->brew_empty_finish_();
+                        this->brew_fail_();
                         return;
                     }
                 }
@@ -1658,12 +1768,58 @@ namespace esphome
 
         // Üst haznede su yok: demleme başlar başlamaz bitti (ilk ölçümlerde hatta işaret kalmadı). Aktarılacak su
         // olmadığına göre demlenme beklenmez: doğrudan "çay hazır" denir, sıcak tutma ve tazelik süresi başlar.
-        void CayseverRobotea::brew_empty_finish_()
+        // Demleme yapılamadı: su aktarımı daha ilk dakikada bitti. Üst hazne boştur ya da su demleme ısıtıcısına
+        // ulaşmıyordur (ör. hazne ya da başlık yerine oturmamış); cihaz ikisini ayıramaz. Fabrika yazılımındaki gibi
+        // hata sayılır: demleme ve kettle ısıtıcısı kapanır, mod kapanır, "çay demlendi" denmez, tazelik başlamaz.
+        void CayseverRobotea::brew_fail_()
         {
-            ESP_LOGW("CayseverRobotea", "Demleme: üst haznede su yok (ilk %u sn içinde bitti); demlenme beklenmeden sıcak tutmaya geçiliyor.", (unsigned)(BREW_EARLY_MS / 1000));
+            ESP_LOGW("CayseverRobotea", "Demleme yapılamadı: su aktarımı ilk %u sn içinde bitti (üst hazne boş ya da su ısıtıcıya ulaşmıyor). Çay demleme kapatılıyor.", (unsigned)(BREW_EARLY_MS / 1000));
             this->brew_set_relay_(false);
+            digitalWrite(this->relay_pin_, LOW);
+            this->relay_active_ = false;
+            this->brew_failed_ = true;
+
+            // Mod bir sonraki turda kapanır; o âna kadar bu karar yinelenmesin
             this->brew_phase_ = BREW_STEEP;
-            this->finish_demleme_();
+            this->brew_last_on_ms_ = this->current_time_;
+            this->set_mode(MODE_KAPALI, 0);
+
+            this->uyari_baslat_(3);
+        }
+
+        // Uyarı: üç bip; verilen tuşun lambası bip'lerle birlikte üç kez kırmızı yanıp söner. İlk adım, modun kapanıp
+        // lambaların söndüğü turdan ve tuşun/komutun kendi bip'inden sonraya bırakılır.
+        void CayseverRobotea::uyari_baslat_(int led)
+        {
+            this->uyari_led_ = led;
+            this->set_timeout("uyari_1a", 400, [this]()
+                              { this->uyari_adimi_(true); });
+            this->set_timeout("uyari_1k", 600, [this]()
+                              { this->uyari_adimi_(false); });
+            this->set_timeout("uyari_2a", 800, [this]()
+                              { this->uyari_adimi_(true); });
+            this->set_timeout("uyari_2k", 1000, [this]()
+                              { this->uyari_adimi_(false); });
+            this->set_timeout("uyari_3a", 1200, [this]()
+                              { this->uyari_adimi_(true); });
+            this->set_timeout("uyari_3k", 1400, [this]()
+                              { this->uyari_adimi_(false); });
+        }
+
+        void CayseverRobotea::uyari_adimi_(bool on)
+        {
+            if (on)
+            {
+                // Uyarı olduğu için "Buton Sesi" anahtarına bakılmaz (KRITIK alarmı gibi)
+                this->activate_sound(std::map<int, bool>{
+                    {this->sound_pins_[0], true},
+                    {this->sound_pins_[2], true},
+                    {this->sound_pins_[1], false}});
+            }
+            // Lamba yalnız kettle yerindeyken ve araya yeni bir mod girmemişken oynatılır
+            if (this->kettle_durumu_ != NORMAL || this->current_mode_ != MODE_KAPALI || this->uyari_led_ < 0)
+                return;
+            this->control_led(on ? this->uyari_led_ : -1);
         }
 
         // Mod açıldıktan otomatik_kapanma süresi sonra cihaz kendini kapatır (fabrika yazılımında 2 saat).
@@ -1760,9 +1916,11 @@ namespace esphome
             // --- 3. SU YOK ANALİZİ ---
             bool water_low_detected = false;
 
-            // A) Statik Limit: 106 derece kesinlikle susuzluktur.
-            // (103.5 su varken overshoot ile görülebildiği için yükselttik)
-            if (temperature >= 106.0f)
+            // A) Statik limit: taban bu sıcaklığı görüyorsa su yoktur.
+            // Su varken de aşım görülebiliyor: kaynama sonrası 103.5 °C, soğuktan kaynatmadaki "steam boost" sırasında
+            // 106.4 °C ölçüldü (gerçek cihaz, ~1 L su; eski 106 °C sınırı yanlış alarm verdi). Sınır fabrika yazılımının
+            // kullandığı değere çekildi; kuru kettle saniyede birkaç derece ısındığı için kesme en çok bir okuma gecikir.
+            if (temperature >= WL_STATIC_LIMIT_T)
             {
                 ESP_LOGE("CayseverRobotea", "KRİTİK SICAKLIK: %.2f°C - Rezistans aşırı ısındı!", temperature);
                 water_low_detected = true;
@@ -2120,9 +2278,15 @@ namespace esphome
                 }
             }
 
+            // Son demleme yapılamadıysa yeni bir mod başlatılana kadar sebep Home Assistant'ta görünsün
+            if (durum == 0 && this->brew_failed_)
+            {
+                durum = 4; // Demlenemedi
+            }
+
             if (this->tazelik_sensor_ != nullptr && durum != this->tazelik_son_durum_)
             {
-                static const char *const DURUMLAR[] = {"Yok", "Demleniyor", "Taze", "Bayat"};
+                static const char *const DURUMLAR[] = {"Yok", "Demleniyor", "Taze", "Bayat", "Demlenemedi"};
                 this->tazelik_sensor_->publish_state(DURUMLAR[durum]);
                 this->tazelik_son_durum_ = durum;
             }
@@ -2186,6 +2350,21 @@ namespace esphome
                     this->cay_demleme_select_->publish_state("KAPALI");
             }
 
+            // Mama suyu sıcak suyla başlatılmaz (fabrika yazılımındaki gibi): ısıtılacak bir şey yoktur ve "mama suyu
+            // hazır" demek yanlış olur. İstek reddedilir, her şey kapanır, uyarı verilir.
+            bool mama_reddedildi = false;
+            if (new_mode == MODE_MAMA_SUYU && this->current_mode_ != MODE_MAMA_SUYU && this->kettle_durumu_ == NORMAL &&
+                this->ntc_sensor_ != nullptr && this->ntc_sensor_->state > MAMA_BASLAMAZ_T)
+            {
+                this->mama_reddet_(this->ntc_sensor_->state);
+                new_mode = MODE_KAPALI;
+                press_count = 0;
+                mama_reddedildi = true;
+                // Home Assistant'tan açılan anahtar kapalıya geri çekilir
+                if (this->mama_suyu_switch_ && this->mama_suyu_switch_->state)
+                    this->mama_suyu_switch_->publish_state(false);
+            }
+
             // 1) Eski modu kapat
             switch (this->current_mode_)
             {
@@ -2226,6 +2405,7 @@ namespace esphome
             if (new_mode != MODE_KAPALI)
             {
                 this->mode_start_ms_ = millis(); // kendiliğinden kapanma bu andan sayılır
+                this->brew_failed_ = false;      // yeni mod: önceki "demlenemedi" bilgisi silinir
             }
 
             // 3) Yeni mod ON işlemleri
@@ -2258,6 +2438,12 @@ namespace esphome
                 this->touch_states_[0] = true;
                 this->control_led(0);
                 this->mama_suyu_durumu_ = MAMA_SUYU_HAZIRLIK;
+                this->mama_vurus_ms_ = 0;
+                this->mama_onceki_vurus_ms_ = 0;
+                this->mama_kazanc_ = MAMA_KAZANC_ILK;
+                this->mama_otur_(MAMA_ILK_BEKLEME_MS); // ilk karar, okuma birkaç saniye izlendikten sonra
+                this->mama_ilk_okuma_ = true;
+                this->mama_hazir_oldu_ = false;
                 if (this->mama_suyu_switch_)
                     this->mama_suyu_switch_->publish_state(true);
 
@@ -2274,6 +2460,9 @@ namespace esphome
 
                 // Süreyi burada ayarla (artık feedback fonksiyonu süre set etmiyor)
                 this->set_demleme_suresi_for_level_(level);
+
+                // Mod başlar başlamaz lamba kırmızı (ısıtma); seviye bildirimi bunun üstüne yürür
+                this->control_led(3);
 
                 // Non-blocking görsel feedback başlat
                 this->visual_feedback_demleme_level(level);
@@ -2312,6 +2501,11 @@ namespace esphome
 
             // 4) Mod sensoru yayınla
             this->update_all_sensors();
+
+            if (mama_reddedildi)
+            {
+                this->uyari_baslat_(0);
+            }
         }
 
         void CayseverRobotea::schedule_process_pending_()

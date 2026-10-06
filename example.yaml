@@ -82,6 +82,8 @@ caysever_robotea:
     name: "Demleme Hattı"
   # Mod açıldıktan bu süre sonra cihaz kendini kapatır (fabrikada 2 saat). Verilmezse kapanmaz.
   otomatik_kapanma: 2h
+  # Mama suyu "hazır" olduktan sonra modun açık kalacağı süre (verilmezse yalnız otomatik_kapanma geçerli)
+  mama_suyu_sicak_tutma: 1h
 
 switch:
   - platform: template
@@ -122,7 +124,16 @@ sensor:
     id: adc_sensor
     pin: GPIO35
     attenuation: 12db
-    update_interval: 2s
+    # Okumaya şebeke uğultusu karışıyor; 2 sn'de bir tek örnek alınınca birkaç °C'lik yavaş bir dalgalanma olarak
+    # görünür. 125 ms'de bir örnek alınıp son 15 örneğin ortancası kullanılır: uğultu ve tek tük bozuk örnekler elenir.
+    # Bileşene değer yine 2 sn'de bir gelir (16 × 125 ms). Açılıştaki ilk değer de pencere dolunca yayınlanır; tek bir
+    # ham örnek hiçbir zaman bileşene ulaşmaz (o âna kadar okuma yoktur, bileşen KORUMA'da bekler).
+    update_interval: 125ms
+    filters:
+      - median:
+          window_size: 15
+          send_every: 16
+          send_first_at: 16
   - platform: resistance
     sensor: adc_sensor
     configuration: DOWNSTREAM  # Sabit direnç aşağı yönlü bağlandı
@@ -136,3 +147,13 @@ sensor:
       reference_temperature: 25°C
       reference_resistance: 34000
     id: ntc_temperature
+
+# İsteğe bağlı tanılama: ses çipindeki klipleri su kaynatmadan dener. Ses anahtarlarına bakmaz, ısıtıcıya dokunmaz.
+# Maske: 1 = GPIO4, 2 = GPIO19, 4 = GPIO32 (toplanır). 5 = bip, 4 = "su kaynadı", 1 = demleme başlıyor,
+# 3 = çay demlendi, 2 ve 6 = filtre kahve, 7 = mama suyu hazır.
+# button:
+#   - platform: template
+#     name: "Ses Denemesi: Su Kaynadı"
+#     entity_category: diagnostic
+#     on_press:
+#       - lambda: id(caysever).ses_dene(4);
