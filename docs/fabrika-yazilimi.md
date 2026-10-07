@@ -75,8 +75,10 @@ kaynamışsa beyaz, 85 °C ve altına düşünce kırmızı (yeniden ısıtıyor
 > okundu ve yukarıdaki gibi (kaynayınca beyaz; sıcaklık ≤ 85 °C ise kırmızı). Fabrika yazılımlı bir cihazda
 > doğrulanana kadar bileşen gözlemi izler: iki düzende de demleme bitene kadar kırmızı.
 
-Filtre kahve (tuş 2) aynı düzenektir; farkları: başlangıç konuşması ses 2, su bittikten sonra bekleme **120 sn**,
-tazelik **40 dk**. Su kaynatma (tuş 3): kaynayınca ses 4; 85 °C'ye düşünce yeniden kaynatır; 2 saatte kapanır. Mama
+Filtre kahve (tuş 2, durum 6–10) aynı düzenektir; kod çaydaki durum 13–17'nin birebir eşidir. Farkları: lamba tuş 2'de,
+başlangıç konuşması ses 2, hazır anonsu son röle çekilişinden **120 sn** sonra (ses 6, çayla aynı klip), tazelik **40 dk**
+(35. dakikada buluta bildirim). Kettle ısıtıcı kahvede de çalışır (alttaki su kaynatılır ve sıcak tutulur); erken bitiş
+ve 2 saatte kapanma çaydaki gibidir. Su kaynatma (tuş 3): kaynayınca ses 4; 85 °C'ye düşünce yeniden kaynatır; 2 saatte kapanır. Mama
 suyu (tuş 1): su 44 °C'den sıcaksa başlamaz (lamba yanıp söner, "hata 3"); hazır olunca ses 8.
 
 
@@ -144,13 +146,15 @@ Yani fabrika "kaynadı"yı 100 °C okumasına değil süreye bağlar ve sıcak t
 | No | Pinler (4 / 19 / 32) | Fabrikada kullanıldığı yer | Bileşendeki adı |
 |---|---|---|---|
 | 1 | 1 / 0 / 1 | tuş bip'i, bayatlama | buton sesi |
-| 2 | 0 / 1 / 0 | filtre kahve başlangıcı | filtre kahve hazırlanıyor |
-| 3 | 0 / 1 / 1 | yukarıdaki hata durumları | "filtre kahve hazır" (fabrikada hata durumlarında çalıyor; ne dediği doğrulanmadı) |
+| 2 | 0 / 1 / 0 | filtre kahve başlangıcı: "filtre kahveniz hazırlanıyor" | filtre kahve hazırlanıyor |
+| 3 | 0 / 1 / 1 | yukarıdaki hata durumları: "hazneye su ekle…" uyarısı | su ekle uyarısı (eskiden "filtre kahve hazır" sanılıyordu) |
 | 4 | 0 / 0 / 1 | su kaynadı | su kaynadı |
 | 5 | 1 / 0 / 0 | çay: kaynadı, demleme başlıyor | çay demleme başlangıcı |
-| 6 | 1 / 1 / 0 | çay / kahve hazır | çay demlendi |
+| 6 | 1 / 1 / 0 | çay / kahve hazır: "içeceğiniz hazır, afiyet olsun" (iki içecek için ortak) | çay demlendi |
 | 7 | 1 / 0 / 1 (uzun) | sessize alma onayı | — |
 | 8 | 1 / 1 / 1 | mama suyu hazır | mama suyu hazır |
+
+2, 3 ve 6 numaralı kliplerin ne dediği gerçek cihazda dinlendi (`ses_dene` ile).
 
 Sessiz modda konuşmalar çalmaz, yerine bip çalar. Sessiz modu: tuş 4 + tuş 1'e birlikte ~2 sn basış.
 
@@ -161,6 +165,7 @@ Sessiz modda konuşmalar çalmaz, yerine bip çalar. Sessiz modu: tuş 4 + tuş 
 | Demlemenin bitişi | GPIO34 ile "su bitti" | `su_bitti_algisi_switch` varsa aynı döngü; yoksa sabit süre: 430 / 330 / 240 / 150 sn (tuşa 1–4 basış) |
 | Su bittikten sonra bekleme | 900 sn | algıyla 900 sn; süreli düzende 240 sn |
 | Üst hazne boşken (ilk 60 sn'de bitti) | ses 3, her şey kapanır, çay lambası kırmızı yanıp söner | aynı mantık: ~47 sn'de anlaşılır, her şey kapanır, üç bip, çay lambası üç kez yanıp söner, tazelik "Demlenemedi" |
+| Kettle'da su yok (§6: > 115 °C ya da hızlı ısınma) | ısıtıcı + demleme kapalı, mod lambası yanıp söner, ses 3 | KRITIK: röleler hemen kapanır, lambalar yanıp söner, alarm. Konuşma sesi açıksa önce ses 3 ("su ekleyin", 4-5 sn) bir kez çalar, alarm 7 sn sonra başlar; kapalıysa yalnız alarm. 120 °C kesmesinde klip çalmaz |
 | Çay tuşu | aç / kapat; seviye yok | kapalıyken 1–4 basış = seviye, açıkken basış = kapat |
 | Çay lambası | kodda: ısıtırken kırmızı, kaynayınca beyaz (gözlem farklı, §3'teki not) | tuşa basılınca kırmızı, demleme bitene kadar kırmızı, "çay demlendi"de beyaz |
 | Kendiliğinden kapanma | 2 saat | `otomatik_kapanma` ile (ör. `2h`) |

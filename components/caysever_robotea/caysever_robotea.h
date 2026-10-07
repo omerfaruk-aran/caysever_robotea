@@ -16,6 +16,7 @@
 #define CAYSEVER_ROBOTEA_SES_DENEME 1
 #define CAYSEVER_ROBOTEA_DEMLENEMEDI 1
 #define CAYSEVER_ROBOTEA_MAMA_FABRIKA 1
+#define CAYSEVER_ROBOTEA_FILTRE_KAHVE 1
 
 namespace esphome
 {
@@ -63,7 +64,8 @@ namespace esphome
       MODE_KAPALI,
       MODE_SU_KAYNATMA,
       MODE_MAMA_SUYU,
-      MODE_CAY_DEMLEME
+      MODE_CAY_DEMLEME,
+      MODE_FILTRE_KAHVE
     };
 
     class CayseverRobotea : public Component
@@ -80,6 +82,7 @@ namespace esphome
       void set_ntc_sensor(sensor::Sensor *sensor) { this->ntc_sensor_ = sensor; }
       void set_su_kaynatma_switch(switch_::Switch *su_kaynatma_switch);
       void set_mama_suyu_switch(switch_::Switch *mama_suyu_switch);
+      void set_filtre_kahve_switch(switch_::Switch *filtre_kahve_switch);
       void set_cay_demleme_select(select::Select *cay_demleme_select);
       void set_cay_demleme_max_switch(switch_::Switch *cay_demleme_max_switch);
       void set_buton_sesi_switch(switch_::Switch *buton_sesi_switch);
@@ -105,6 +108,7 @@ namespace esphome
       sensor::Sensor *ntc_sensor_ = nullptr; // NTC sensörü (ESPHome'dan bağlanacak)
       switch_::Switch *su_kaynatma_switch_ = nullptr;
       switch_::Switch *mama_suyu_switch_ = nullptr;
+      switch_::Switch *filtre_kahve_switch_ = nullptr;
       switch_::Switch *buton_sesi_switch_ = nullptr;
       switch_::Switch *konusma_sesi_switch_ = nullptr;
       switch_::Switch *su_kontrol_switch_ = nullptr;
@@ -148,6 +152,7 @@ namespace esphome
 
       void update_su_kaynatma(bool su_kaynatma);
       void update_mama_suyu(bool mama_suyu);
+      void update_filtre_kahve(bool filtre_kahve);
       void update_cay_demleme(const std::string &level);
       void update_all_sensors();
       void handle_critical_sounds();
@@ -159,12 +164,20 @@ namespace esphome
       void handle_touch_input_food_water();
       void handle_touch_input_boiling_water();
       void handle_touch_input_brew_tea();
+      void handle_touch_input_filter_coffee();
       void handle_touch_input_toggle_button_sound();
       void handle_touch_input_toggle_speak_sound();
       void check_water_level();
       bool slope_is_sustained_();           // Su seviye eğimi: artış okumadan okumaya sürüyor mu (tek okuma sıçraması değil mi)
       void record_ntc_sample_(float value); // NTC'nin her yeni okumasını zamanıyla sakla
-      void enter_critical_();               // KRITIK'e geçiş: röleler, işlemler ve mod kapanır, alarm başlar
+      // KRITIK'e neden girildiği. Su yetersizliği (eğim ya da sabit sınır) doğrulandıysa fabrika yazılımındaki gibi
+      // "su ekleyin" klibi de çalınır; diğer sebeplerde yalnız alarm.
+      enum KritikSebep : uint8_t
+      {
+        KRITIK_SEBEP_ASIRI_ISINMA, // 120 °C kesmesi
+        KRITIK_SEBEP_SU_AZ         // check_water_level(): kettle'da su yok ya da çok az
+      };
+      void enter_critical_(KritikSebep sebep = KRITIK_SEBEP_ASIRI_ISINMA); // KRITIK'e geçiş: röleler, işlemler ve mod kapanır, alarm başlar
       void restore_mode_leds_();            // Aktif moda ve aşamasına göre tuş LED'ini geri yak
       void handle_critical_mode_leds();
       void handle_exit_critical_mode();
@@ -175,7 +188,7 @@ namespace esphome
       void play_cay_demleme_start_sound();
       void play_cay_demleme_done_sound();
       void play_filtre_kahve_hazirlaniyor_sound();
-      void play_filtre_kahve_done_sound();
+      void play_su_ekle_sound(); // "hazneye su ekle..." uyarısı (fabrika yazılımı hata durumlarında çalar)
       void play_su_kaynadi_sound();
 
       void handle_mama_suyu_hazirla(); // Mama suyu hazırlama fonksiyonu
@@ -216,6 +229,16 @@ namespace esphome
       // onaylanmış sayılır; daha kısası (tek okumalık sensör kaybı) KRITIK'i bozmaz.
       uint32_t koruma_start_ms_{0};
       static constexpr uint32_t KRITIK_ONAY_MS = 3000;
+
+      // KRITIK alarmı saniyede bir bip verir. Su yetersizliğinde "Konuşma Sesi" açıksa önce "su ekleyin" klibi
+      // çalınır: klip, girişteki bip'lerden KRITIK_SU_EKLE_KLIP_MS sonra tetiklenir ve alarmın ilk bip'i
+      // KRITIK_SU_EKLE_ALARM_MS'ye ertelenir (her tetik çipte çalan klibi keser). Klip gerçek cihazda 4-5 sn sürüyor
+      // (kulakla ölçüldü); alarm klibin başlamasından 6,4 sn sonra gelir. Röleler girişte hemen kapanır; ertelenen
+      // yalnız sestir.
+      static constexpr uint32_t KRITIK_ALARM_ARALIK_MS = 1000;
+      static constexpr uint32_t KRITIK_SU_EKLE_KLIP_MS = 600;
+      static constexpr uint32_t KRITIK_SU_EKLE_ALARM_MS = 7000;
+      uint32_t kritik_alarm_bekleme_ms_{KRITIK_ALARM_ARALIK_MS}; // bir sonraki alarm bip'ine kadar beklenecek süre
 
       // Röle ve sensör pinleri
       int relay_pin_ = 17;         // Su kaynatma rölesi GPIO17
@@ -267,6 +290,8 @@ namespace esphome
       static constexpr uint32_t BREW_SENSE_WINDOW_MS = 200;  // ölçüm penceresi (fabrika ~150 ms)
       static constexpr uint32_t BREW_SENSE_MIN_EDGES = 6;    // fabrika eşiği: bundan az kenar = su bitti
       static constexpr uint32_t BREW_EARLY_MS = 60000;       // döngünün ilk 60 sn'sinde biterse demleme yapılamadı sayılır (hata)
+      static constexpr uint32_t KAHVE_DEMLENME_MS = 120000;  // filtre kahve; fabrika: son röle açılışından 120 s
+      static constexpr uint32_t KAHVE_TAZELIK_MS = 40 * 60 * 1000; // filtre kahve; fabrika: 2400 s
       static constexpr uint32_t BREW_STEEP_MS = 900000;      // fabrika: son röle açılışından 900 sn sonra çay hazır
       static constexpr uint32_t BREW_TRUST_MIN_RATE = 30;    // kenar/sn: güven için en az (6 kenar / 200 ms'nin karşılığı)
       static constexpr uint32_t BREW_STORM_RATE = 2000;      // kenar/sn: bunun üstü şebeke işareti olamaz
@@ -277,9 +302,13 @@ namespace esphome
       void brew_set_relay_(bool on);
       void brew_resume_after_koruma_();
       void brew_fail_();                  // demleme yapılamadı: her şey kapanır, uyarı verilir
-      void uyari_baslat_(int led);        // üç bip; verilen tuşun lambası bip'lerle birlikte üç kez kırmızı yanıp söner
+      // Uyarı: verilen tuşun lambası üç kez kırmızı yanıp söner; ses olarak üç bip ya da (su_ekle ve konuşma açıksa)
+      // "hazneye su ekle..." klibi çalar.
+      void uyari_baslat_(int led, bool su_ekle = false);
       void uyari_adimi_(bool on);         // uyarının bir adımı: bip ve lamba
       int uyari_led_{-1};
+      bool uyari_su_ekle_{false};
+      uint8_t uyari_adim_no_{0};
 
       // --- Mama suyu: 40 °C'ye "vur, bekle, ölç" ile yaklaşılır ---
       // Sensör kettle tabanındadır ve ısıtıcının 15–20 sn gerisinden gelir; ısıtıcı röleyle tam güçte çalıştığı için
@@ -400,6 +429,27 @@ namespace esphome
 
         this->play_button_sound();
         this->update_su_kaynatma(state);
+      }
+
+      // Filtre kahve, çay demlemeyle aynı düzeneği kullanır (fabrika yazılımındaki gibi); süreler, lamba ve başlangıç sesi farklıdır.
+      bool kahve_() const { return this->current_mode_ == MODE_FILTRE_KAHVE; }
+      int demleme_led_() const { return this->kahve_() ? 1 : 3; }
+      uint32_t demlenme_ms_() const { return this->kahve_() ? KAHVE_DEMLENME_MS : BREW_STEEP_MS; }
+      uint32_t tazelik_ms_() const { return this->kahve_() ? KAHVE_TAZELIK_MS : TAZELIK_SURESI_MS; }
+
+      void on_filtre_kahve_change(bool state)
+      {
+        if (this->touch_states_[1] == state)
+        {
+          ESP_LOGI("CayseverRobotea", "Durum zaten %s, işlem yapılmadı.",
+                   state ? "aktif" : "pasif");
+          return;
+        }
+
+        ESP_LOGI("CayseverRobotea", "Filtre Kahve Switch durumu değişti: %s", state ? "ON" : "OFF");
+
+        this->play_button_sound();
+        this->update_filtre_kahve(state);
       }
 
       void on_mama_suyu_change(bool state)

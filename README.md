@@ -24,6 +24,13 @@ Proje kapsamında cihaz üzerinde yapılan değişiklikler, cihazın garanti kap
 - 4 farklı demleme seviyesi: **1/4, 2/4, 3/4, MAX**.
 - Her seviyeye göre belirlenen süre sonunda rezistans kapanır, enerji tasarrufu sağlanır.
 
+### ☕ **Filtre Kahve (isteğe bağlı)**
+- Tuş 2 ya da `filtre_kahve_switch` ile başlar; aynı tuş kapatır. Çay demlemeyle aynı düzenektir (fabrika yazılımındaki
+  gibi): kettle kaynar, "filtre kahveniz hazırlanıyor" denir, üst haznedeki su aktarılır; su bittikten **2 dk** sonra
+  "içeceğiniz hazır" denir, tazelik **40 dk** sayılır. Seviye seçimi yoktur.
+- Alttaki kettle'da da su olmalıdır (kaynatılır ve sıcak tutulur).
+- Su bitti algısı kapalıysa ya da girişte işaret yoksa su aktarımı MAX'ın süresi (430 sn) kadar sürer.
+
 ### 💧 **Su Bitti Algısı (isteğe bağlı)**
 - Fabrika yazılımındaki gibi: demleme rölesi 10 sn'de bir kısa süre bırakılır ve **GPIO34** girişinde şebeke işareti
   kalıp kalmadığına bakılır. İşaret kesildiyse üst haznedeki su bitmiştir; röle bırakılır, su bittikten 15 dk sonra
@@ -31,6 +38,7 @@ Proje kapsamında cihaz üzerinde yapılan değişiklikler, cihazın garanti kap
 - Su aktarımı daha ilk dakikada biterse (üst hazne boş ya da su ısıtıcıya ulaşmıyor; ~47 sn'de anlaşılır) demleme
   **yapılamadı** sayılır: her şey kapanır, üç bip çalar, çay lambası üç kez yanıp söner, tazelik sensörü yeni bir mod
   başlatılana kadar "Demlenemedi" gösterir. Fabrika yazılımı da bu durumu hata sayar.
+  Konuşma sesi açıksa üç bip yerine fabrikadaki "hazneye su ekle…" uyarısı çalar.
 - Yaml'da `su_bitti_algisi_switch` ile açılır; anahtar kapatılırsa ya da girişte hiç işaret görülmezse demleme eski,
   süreli düzenle yürür. `demleme_hatti_sensor` tanılama sensörü girişteki kenar sayısını gösterir.
 - Ayrıntı: [docs/fabrika-yazilimi.md](docs/fabrika-yazilimi.md).
@@ -54,6 +62,9 @@ Proje kapsamında cihaz üzerinde yapılan değişiklikler, cihazın garanti kap
 ### 🔊 **Sesli ve Görsel Geri Bildirim**
 - **Buton Sesi:** Kullanıcı geri bildirimi için dokunmatik buton sesleri.  
 - **Konuşma Sesi:** İşlemlerin durumuna göre sesli uyarılar.  
+- **Su yetersizliği:** kettle'da su kalmadığı ya da çok az olduğu doğrulanınca (hızlı ısınma ya da 115 °C) röleler
+  hemen kapanır ve KRITIK alarmı başlar. Konuşma sesi açıksa önce fabrikadaki "su ekleyin" uyarısı bir kez çalar; alarm
+  onu kesmemek için 7 sn sonra başlar (klip 4-5 sn sürüyor). Konuşma sesi kapalıyken ve diğer KRITIK sebeplerinde (120 °C kesmesi) yalnız alarm.
 - **Çay lambası:** tuşa basılınca kırmızı, demleme bitince beyaz. Tek basışta (MAX) tek bip; 2–4 basışta seviye
   beyaz yanıp sönmeyle gösterilir.
 - **Ses denemesi (isteğe bağlı):** `id(caysever).ses_dene(maske)` ses çipindeki klipleri doğrudan çalar; örneği

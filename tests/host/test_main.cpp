@@ -150,7 +150,7 @@ namespace
   {
     Exposed dev;
     sensor::Sensor ntc, tazelik_kalan;
-    switch_::Switch su_kaynatma, mama_suyu, buton_sesi, konusma_sesi, su_kontrol, su_bitti;
+    switch_::Switch su_kaynatma, mama_suyu, filtre_kahve, buton_sesi, konusma_sesi, su_kontrol, su_bitti;
     sensor::Sensor demleme_hatti;
     BrewHw hw;
     bool has_brew_sense = false;                             // bu derlemede "su bitti" algısı var ve istenmiş
@@ -194,6 +194,9 @@ namespace
       dev.set_ntc_sensor(&ntc);
       dev.set_su_kaynatma_switch(&su_kaynatma);
       dev.set_mama_suyu_switch(&mama_suyu);
+#ifdef CAYSEVER_ROBOTEA_FILTRE_KAHVE
+      dev.set_filtre_kahve_switch(&filtre_kahve);
+#endif
       if (with_select)
         dev.set_cay_demleme_select(&cay);
       dev.set_buton_sesi_switch(&buton_sesi);
@@ -542,9 +545,58 @@ namespace
   // ---------------------------------------------------------------------------------------------
   // Su azlığı algılaması: gerçek tehlike hâlâ yakalanıyor mu?
   // ---------------------------------------------------------------------------------------------
-  int scenario_su_azligi(float rate, bool boils, bool expect_kritik, uint32_t max_delay_ms, const char *what)
+  // KRITIK'e girildikten sonraki ses tetikleri. Girişteki bip'ler (ilk yarım saniye) alarm sayılmaz.
+  struct KritikSes
+  {
+    int su_ekle = 0;           // "su ekleyin" klibi (19+32) kaç kez tetiklendi
+    uint32_t su_ekle_ms = 0;   // KRITIK'ten kaç ms sonra
+    uint32_t sessizlik_ms = 0; // klipten sonraki ilk tetiğe kadar geçen süre (0 = başka tetik gelmedi)
+    int alarm = 0;             // alarm bip'i sayısı
+    uint32_t ilk_alarm_ms = 0; // ilk alarm bip'i KRITIK'ten kaç ms sonra
+  };
+  KritikSes kritik_sesleri(const Rig &rig)
+  {
+    KritikSes k;
+    uint32_t klip_an = 0;
+    for (const auto &snd : rig.sounds)
+    {
+      if (rig.first_kritik_ms == 0 || snd.first < rig.first_kritik_ms)
+        continue;
+      uint32_t el = snd.first - rig.first_kritik_ms;
+      if (snd.second == "19+32")
+      {
+        if (k.su_ekle++ == 0)
+        {
+          k.su_ekle_ms = el;
+          klip_an = snd.first;
+        }
+        continue;
+      }
+      if (klip_an && !k.sessizlik_ms)
+        k.sessizlik_ms = snd.first - klip_an;
+      if (snd.second == "4+32" && el >= 500)
+      {
+        if (k.alarm++ == 0)
+          k.ilk_alarm_ms = el;
+      }
+    }
+    return k;
+  }
+  // Baştan beri "su ekleyin" klibinin kaç kez tetiklendiği (KRITIK olsun olmasın)
+  int su_ekle_sayisi(const Rig &rig)
+  {
+    int n = 0;
+    for (const auto &snd : rig.sounds)
+      if (snd.second == "19+32")
+        n++;
+    return n;
+  }
+
+  int scenario_su_azligi(float rate, bool boils, bool expect_kritik, uint32_t max_delay_ms, const char *what, bool konusma = true)
   {
     Rig rig;
+    if (!konusma)
+      rig.konusma_sesi.publish_state(false);
     Thermal th{25.0f, rate, 0.02f, boils};
     rig.hold(25.0f, 4000);
     rig.su_kaynatma.publish_state(true);
@@ -558,11 +610,31 @@ namespace
       check(rig.first_kritik_ms != 0, what);
       check(dly <= max_delay_ms, "algılama gecikmesi sınırın içinde");
       check(rig.relays_off(), "KRITIK'te iki röle de kapalı");
+      // Su yetersizliğinde "su ekleyin" klibi: konuşma açıksa bir kez çalar ve alarm onu kesmez; kapalıysa alarm eskisi gibi
+      rig.hold(th.t, 12000);
+      KritikSes k = kritik_sesleri(rig);
+      printf("  ölçüm (konuşma %s): \"su ekleyin\" %d kez (KRITIK'ten %.1f sn sonra) · klipten sonraki ilk tetik %.1f sn sonra · ilk alarm bip'i %.1f sn'de · 12 sn'de %d alarm bip'i\n",
+             konusma ? "açık" : "kapalı", k.su_ekle, k.su_ekle_ms / 1000.0, k.sessizlik_ms / 1000.0, k.ilk_alarm_ms / 1000.0, k.alarm);
+      if (konusma)
+      {
+        check(k.su_ekle == 1, "\"su ekleyin\" klibi bir kez çaldı");
+        check(k.su_ekle_ms >= 500 && k.su_ekle_ms <= 700, "klip, girişteki bip'lerden sonra tetiklendi");
+        // Klip gerçek cihazda 4-5 sn sürüyor: ardından en az 6 sn hiçbir tetik gelmemeli
+        check(k.sessizlik_ms >= 6000, "klipten sonraki 6 sn'de başka tetik yok: alarm konuşmayı kesmedi");
+        check(k.alarm >= 3, "alarm klipten sonra saniyede bir sürüyor");
+      }
+      else
+      {
+        check(k.su_ekle == 0, "konuşma kapalı: klip çalmadı");
+        check(k.ilk_alarm_ms >= 900 && k.ilk_alarm_ms <= 1100 && k.alarm >= 8, "alarm eskisi gibi: ilk bip 1 sn'de, sonra saniyede bir");
+      }
+      check(rig.relays_off() && rig.dev.kettle_durumu_ == KRITIK && rig.violations == 0, "12 sn sonra hâlâ KRITIK, röleler kapalı");
     }
     else
     {
       check(rig.first_kritik_ms == 0, what);
       check(rig.dev.su_kaynatma_durumu_ == SU_KAYNATMA_SICAKLIK_KORUMA, "su kaynadı ve sıcak tutmaya geçildi");
+      check(su_ekle_sayisi(rig) == 0, "\"su ekleyin\" hiç çalmadı");
     }
     check(rig.violations == 0, "NORMAL dışındaki hiçbir anda röle açık kalmadı");
     return 0;
@@ -582,6 +654,8 @@ namespace
     check(rig.first_kritik_ms != 0, "az su, araya tek bozuk okuma girse de yakalanıyor");
     check(dly <= 16000, "en geç bir pencere (7 sn) gecikmeyle");
     check(rig.relays_off() && rig.violations == 0, "röleler kapalı, ihlal yok");
+    rig.hold(th.t, 3000);
+    check(kritik_sesleri(rig).su_ekle == 1, "\"su ekleyin\" klibi bir kez çaldı");
     return 0;
   }
 
@@ -650,6 +724,7 @@ namespace
            rig.first_kritik_ms ? ("röle açıldıktan " + std::to_string((rig.first_kritik_ms - r) / 1000.0).substr(0, 4) + " sn sonra VAR").c_str() : "yok",
            rig.tazelik.state.c_str(), rig.mod_durumu.state.c_str());
     check(rig.first_kritik_ms == 0, "bozuk okuma yanlış KRITIK alarmı üretmedi");
+    check(su_ekle_sayisi(rig) == 0, "\"su ekleyin\" hiç çalmadı");
     check(rig.tazelik.state == "Taze" && rig.dev.cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA, "çay sıcak tutmada ve Taze kalmaya devam ediyor");
     check(rig.violations == 0, "ihlal yok");
     return 0;
@@ -814,6 +889,12 @@ namespace
     check(rig.relays_off(), "iki röle de kapalı");
     check(rig.aktif_mod.state == "KAPALI" && !rig.su_kaynatma.state && rig.dev.su_kaynatma_durumu_ == SU_KAYNATMA_KAPALI, "mod kapandı, HA'da anahtar kapalı");
     check(rig.dev.kritik_sound_active_, "alarm sesi etkin");
+    {
+      KritikSes k = kritik_sesleri(rig);
+      printf("  ölçüm: \"su ekleyin\" %d kez · ilk alarm bip'i %.1f sn'de\n", k.su_ekle, k.ilk_alarm_ms / 1000.0);
+      check(k.su_ekle == 0, "120 °C kesmesi başka bir sebep: \"su ekleyin\" çalmadı");
+      check(k.ilk_alarm_ms >= 900 && k.ilk_alarm_ms <= 1100, "alarm eskisi gibi 1 sn'de başladı");
+    }
     // Soğudu; kullanıcı 1. tuşa 1,3 sn basarak alarmı onayladı
     rig.hold(60.0f, 4000);
     rig.press(0, 1300);
@@ -1215,7 +1296,7 @@ namespace
     return 0;
   }
 
-  int scenario_cay_bos_hazne()
+  int scenario_cay_bos_hazne(bool sessiz = false)
   {
     // Üst hazne boş (ya da su demleme ısıtıcısına ulaşmıyor), kettle'da su var, çay başlatıldı. Beklenen: cihaz suyu
     // itmeyi dener, ilk dakikada olmadığını anlar; fabrika yazılımındaki gibi hata sayar: her şey kapanır, üç bip,
@@ -1223,6 +1304,8 @@ namespace
     Rig rig(true, true, true);
     rig.hw.present = true;
     rig.hw.water_s = 0.0f;
+    if (sessiz)
+      rig.konusma_sesi.publish_state(false);
     Thermal th{100.5f, 0.30f, 0.05f, true};
     uint32_t t_b = start_tea_until_brewing(rig, th);
     size_t sounds_before = rig.sounds.size();
@@ -1240,13 +1323,15 @@ namespace
     // Uyarı sürerken ve sonrasında: su 90 °C'ye soğusa da ısıtıcı açılmamalı
     th.t = 90.0f;
     run_thermal(rig, th, 60000);
-    int beeps = 0, done_speech = 0;
+    int beeps = 0, done_speech = 0, su_ekle = 0;
     for (size_t i = sounds_before; i < rig.sounds.size(); i++)
     {
       if (rig.sounds[i].second == "4+32")
         beeps++;
       if (rig.sounds[i].second == "4+19")
         done_speech++;
+      if (rig.sounds[i].second == "19+32")
+        su_ekle++;
     }
     std::string sira = lamba_sirasi(rig, t_end > 100 ? t_end - 100 : 0);
     int kirmizi = lamba_sayisi(rig, KIRMIZI, t_end > 100 ? t_end - 100 : 0);
@@ -1259,15 +1344,18 @@ namespace
     rig.su_kaynatma.publish_state(true);
     run_thermal(rig, th, 4000);
     std::string taz_sonra = rig.tazelik.state;
-    printf("  ölçüm: demleme başladıktan %.1f sn sonra kesildi · demleme rölesi toplam %.1f sn açık, %d kez çekildi · bip %d · \"çay demlendi\" konuşması %d\n",
-           t_b ? (t_end - t_b) / 1000.0 : -1.0, dem_on / 1000.0, on_edges, beeps, done_speech);
+    printf("  ölçüm: demleme başladıktan %.1f sn sonra kesildi · demleme rölesi toplam %.1f sn açık, %d kez çekildi · \"hazneye su ekle\" klibi %d · bip %d · \"hazır\" konuşması %d\n",
+           t_b ? (t_end - t_b) / 1000.0 : -1.0, dem_on / 1000.0, on_edges, su_ekle, beeps, done_speech);
     printf("         sonra: mod %s · ısıtıcı %s · tazelik %s · Dem lambası %d · çay lambası: %s · yeni mod başlayınca tazelik %s\n", off ? "KAPALI" : "AÇIK",
            no_heat ? "açılmadı" : "AÇILDI", taz.c_str(), dem_led, sira.c_str(), taz_sonra.c_str());
     check(t_b != 0, "hazırlık: demleme başladı");
     check(t_end - t_b >= 46000 && t_end - t_b <= 50500, "su aktarılamadığı ~48 sn'de anlaşıldı (cihazda ölçülen: 48,0 sn)");
     check(on_edges == 4 && dem_on <= 47000, "demleme rölesi dört kez çekildi (ilk itiş + 3 ölçüm arası), termostat açınca bırakıldı");
     check(off, "her şey kapandı: mod KAPALI, iki röle de kapalı; su soğuyunca ısıtıcı açılmadı");
-    check(beeps == 3 && done_speech == 0, "üç uyarı bip'i; \"çay demlendi\" denmedi");
+    if (sessiz)
+      check(beeps == 3 && su_ekle == 0 && done_speech == 0, "konuşma kapalı: üç uyarı bip'i; \"hazır\" denmedi");
+    else
+      check(su_ekle == 1 && beeps == 0 && done_speech == 0, "\"hazneye su ekle\" klibi bir kez çaldı; bip yok, \"hazır\" denmedi");
     check(kirmizi == 3 && dark && dem_led == LOW, "çay lambası üç kez kırmızı yanıp söndü, sonra bütün lambalar sönük");
     check(taz == "Demlenemedi", "tazelik sensörü \"Demlenemedi\" gösteriyor (Taze değil)");
     check(taz_sonra == "Yok", "yeni bir mod başlatılınca \"Demlenemedi\" silindi");
@@ -1591,6 +1679,7 @@ namespace
     check(rig.first_kritik_ms != 0, "kuru kettle sıcak tutmada KRITIK'e geçiriyor");
     check(t_at_kritik < 128.0f, "kesme, sınırı geçen ilk okumada gerçekleşti (115 °C + bir okuma aralığı)");
     check(rig.relays_off() && rig.aktif_mod.state == "KAPALI" && rig.dev.kritik_sound_active_, "röleler ve mod kapalı, alarm sesli");
+    check(kritik_sesleri(rig).su_ekle == 1, "sabit sınırla yakalanan kuru kettle'da da \"su ekleyin\" bir kez çaldı");
     check(rig.violations == 0, "ihlal yok");
     return 0;
   }
@@ -2027,6 +2116,179 @@ namespace
     return 0;
   }
 
+  // ---------------------------------------------------------------------------------------------
+  // Filtre kahve (tuş 2): çayla aynı düzenek; su bitince 2 dk sonra hazır, 40 dk tazelik
+  // ---------------------------------------------------------------------------------------------
+#ifdef CAYSEVER_ROBOTEA_FILTRE_KAHVE
+  const char *const KAHVE_KIRMIZI = "00010", *const KAHVE_BEYAZ = "11101";
+
+  int scenario_kahve_su_bitince(bool algili)
+  {
+    // Üst haznede 200 sn'lik su; filtre kahve Home Assistant'tan başlatılır.
+    Rig rig(true, true, algili);
+    rig.hw.present = algili;
+    rig.hw.water_s = 200.0f;
+    Thermal th{60.0f, 0.30f, 0.05f, true};
+    rig.hold(th.t, 4000);
+    size_t s0 = rig.sounds.size();
+    uint32_t t0 = millis();
+    rig.filtre_kahve.publish_state(true);
+    run_thermal(rig, th, 4000);
+    std::string mod = rig.aktif_mod.state, led_isit = rig.btn_leds();
+    run_thermal(rig, th, 20 * 60000, nullptr, [&] { return rig.dev.cay_demleme_durumu_ == DEMLEME_BASLADI; });
+    uint32_t t_b = millis();
+    for (auto &c : rig.mod_durumu.changes)
+      if (c.second == "DEMLEME_BASLADI")
+        t_b = c.first;
+    std::string led_dem;
+    bool sampled = false;
+    run_thermal(rig, th, 40 * 60000, [&](int, float v) {
+      if (!sampled && millis() - t_b > 5000)
+      {
+        led_dem = rig.btn_leds();
+        sampled = true;
+      }
+      return v;
+    }, [&] { return rig.dev.cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA; });
+    uint32_t t_done = millis();
+    for (auto &c : rig.mod_durumu.changes)
+      if (c.second == "SICAKLIK_KORUMA")
+        t_done = c.first;
+    uint32_t bekleme = t_done - rig.hw.last_on_edge_ms;
+    int basla = ses_sayisi(rig, "19", s0), cay_basla = ses_sayisi(rig, "4", s0), hazir = ses_sayisi(rig, "4+19", s0), bip = ses_sayisi(rig, "4+32", s0);
+    std::string led_hazir = rig.btn_leds(), taz = rig.tazelik.state;
+    float kalan = rig.tazelik_kalan.state;
+    int dem_led = digitalRead(DEM_LED);
+    // tazelik: 40 dk sonra Bayat
+    run_thermal(rig, th, 45 * 60000, nullptr, [&] { return rig.tazelik.state == "Bayat"; });
+    uint32_t t_bayat = millis();
+    for (auto &c : rig.tazelik.changes)
+      if (c.second == "Bayat")
+        t_bayat = c.first;
+    printf("  ölçüm (%s): aktif mod %s · ısıtırken lamba %s, demlerken %s, hazırda %s · demleme rölesi %.1f sn açık · son çekilişten hazıra %.1f sn\n",
+           algili ? "algılı" : "süreli", mod.c_str(), led_isit.c_str(), led_dem.c_str(), led_hazir.c_str(), rig.hw.dem_on_ms / 1000.0, bekleme / 1000.0);
+    printf("         sesler: bip %d, \"filtre kahveniz hazırlanıyor\" %d, çay başlangıç klibi %d, \"hazır\" %d · tazelik %s (%.0f dk), Dem lambası %d · hazırdan %.1f dk sonra %s\n",
+           bip, basla, cay_basla, hazir, taz.c_str(), kalan, dem_led, (t_bayat - t_done) / 60000.0, rig.tazelik.state.c_str());
+    check(mod == "FILTRE_KAHVE" && rig.filtre_kahve.state, "filtre kahve modu açıldı, anahtar açık");
+    check(led_isit == KAHVE_KIRMIZI && led_dem == KAHVE_KIRMIZI && led_hazir == KAHVE_BEYAZ, "kahve lambası: ısıtırken ve demlerken kırmızı, hazırda beyaz");
+    check(bip == 1 && basla == 1 && cay_basla == 0 && hazir == 1, "komut bip'i, \"filtre kahveniz hazırlanıyor\" ve \"hazır\" birer kez; çay klibi yok");
+    if (algili)
+    {
+      check(rig.hw.dem_on_ms >= 240000 && rig.hw.dem_on_ms <= 251500, "röle su bitene kadar açık kaldı, termostat açınca bırakıldı");
+      check(bekleme >= 119000 && bekleme <= 122500, "kahve, son röle çekilişinden 120 sn sonra hazır (çayda 900 sn)");
+    }
+    else
+    {
+      check(rig.hw.dem_on_ms >= 429500 && rig.hw.dem_on_ms <= 430500, "işaret yokken süreli düzen: röle 430 sn açık");
+      check(bekleme >= 549000 && bekleme <= 552500, "röle bırakıldıktan 120 sn sonra hazır");
+    }
+    check(taz == "Taze" && kalan == 40.0f && dem_led == HIGH, "hazırda Taze, kalan 40 dk, Dem lambası yanık");
+    check(rig.tazelik.state == "Bayat" && t_bayat - t_done >= 2399000 && t_bayat - t_done <= 2403000 && digitalRead(BAY_LED) == HIGH, "40 dk sonra Bayat, Bay lambası yanık");
+    check(rig.first_kritik_ms == 0 && rig.violations == 0, "KRITIK yok, ihlal yok");
+    (void)t0;
+    return 0;
+  }
+
+  int scenario_kahve_tus()
+  {
+    // Cihazdaki tuş 2: kısa basış açar, yeniden basış kapatır. Tuş 1 + tuş 2 birlikte (buton sesi kısayolu) ve uzun basış modu değiştirmez.
+    Rig rig;
+    rig.hold(60.0f, 4000);
+    rig.press(1);
+    rig.hold(60.0f, 2000);
+    bool acildi = rig.dev.current_mode_ == MODE_FILTRE_KAHVE && rig.filtre_kahve.state && rig.btn_leds() == KAHVE_KIRMIZI && digitalRead(RELAY) == HIGH;
+    rig.press(1);
+    rig.hold(60.0f, 2000);
+    bool kapandi = rig.dev.current_mode_ == MODE_KAPALI && !rig.filtre_kahve.state && rig.relays_off() && rig.btn_leds_all_off();
+    // tuş 1 + tuş 2 birlikte 2,5 sn
+    bool ses_once = rig.buton_sesi.state;
+    hoststub::st().pin_level[TOUCH[0]] = LOW;
+    hoststub::st().pin_level[TOUCH[1]] = LOW;
+    rig.run(2500);
+    hoststub::st().pin_level[TOUCH[1]] = HIGH;
+    rig.run(100);
+    hoststub::st().pin_level[TOUCH[0]] = HIGH;
+    rig.hold(60.0f, 3000);
+    bool kisayol = rig.buton_sesi.state != ses_once && rig.dev.current_mode_ == MODE_KAPALI;
+    // tek başına uzun basış (2 sn)
+    rig.press(1, 2000);
+    rig.hold(60.0f, 2000);
+    bool uzun = rig.dev.current_mode_ == MODE_KAPALI;
+    printf("  ölçüm: kısa basış → %s · yeniden basış → %s · tuş 1+2 birlikte → buton sesi %s, mod %s · uzun basış → mod %s\n", acildi ? "açıldı" : "AÇILMADI",
+           kapandi ? "kapandı" : "KAPANMADI", rig.buton_sesi.state != ses_once ? "değişti" : "DEĞİŞMEDİ", kisayol ? "değişmedi" : "DEĞİŞTİ", uzun ? "değişmedi" : "DEĞİŞTİ");
+    check(acildi, "kısa basış filtre kahveyi başlattı: lamba kırmızı, ısıtıcı açık");
+    check(kapandi, "yeniden basış kapattı");
+    check(kisayol, "tuş 1 + tuş 2 kısayolu buton sesini değiştirdi, filtre kahveyi başlatmadı");
+    check(uzun, "uzun basış modu değiştirmedi");
+    check(rig.violations == 0, "ihlal yok");
+    return 0;
+  }
+
+  int scenario_kahve_bos_hazne()
+  {
+    // Üst hazne boş: çaydaki gibi "Demlenemedi"; uyarı kahve tuşunun lambasında.
+    Rig rig(true, true, true);
+    rig.hw.present = true;
+    rig.hw.water_s = 0.0f;
+    Thermal th{100.5f, 0.30f, 0.05f, true};
+    rig.hold(th.t, 4000);
+    rig.filtre_kahve.publish_state(true);
+    run_thermal(rig, th, 60000, nullptr, [&] { return rig.dev.cay_demleme_durumu_ == DEMLEME_BASLADI; });
+    uint32_t t_b = millis();
+    size_t s0 = rig.sounds.size();
+    run_thermal(rig, th, 5 * 60000, nullptr, [&] { return rig.dev.current_mode_ == MODE_KAPALI; });
+    uint32_t t_end = millis();
+    run_thermal(rig, th, 6000);
+    int kirmizi = 0;
+    for (auto &e : rig.led_log)
+      if (e.first >= t_end - 100 && e.second == KAHVE_KIRMIZI)
+        kirmizi++;
+    printf("  ölçüm: demleme başladıktan %.0f sn sonra mod %s · tazelik %s · anahtar %d · \"hazneye su ekle\" %d · \"hazır\" %d · kahve lambası %d kez yanıp söndü\n",
+           (t_end - t_b) / 1000.0, rig.aktif_mod.state.c_str(), rig.tazelik.state.c_str(), (int)rig.filtre_kahve.state, ses_sayisi(rig, "19+32", s0), ses_sayisi(rig, "4+19", s0), kirmizi);
+    check(rig.dev.current_mode_ == MODE_KAPALI && rig.relays_off() && !rig.filtre_kahve.state, "her şey kapandı, anahtar kapalı");
+    check(rig.tazelik.state == "Demlenemedi", "tazelik \"Demlenemedi\"");
+    check(ses_sayisi(rig, "19+32", s0) == 1 && ses_sayisi(rig, "4+19", s0) == 0, "\"hazneye su ekle\" klibi çaldı; \"hazır\" denmedi");
+    check(kirmizi == 3 && rig.btn_leds_all_off(), "kahve lambası üç kez kırmızı yanıp söndü");
+    check(rig.first_kritik_ms == 0 && rig.violations == 0, "KRITIK yok, ihlal yok");
+    return 0;
+  }
+
+  int scenario_kahve_gecis()
+  {
+    // Filtre kahve açıkken çay başlatılır (ve tersi); KRITIK'te filtre kahve reddedilir.
+    Rig rig;
+    rig.hold(60.0f, 4000);
+    rig.filtre_kahve.publish_state(true);
+    rig.hold(60.0f, 3000);
+    rig.cay.publish_state("MAX");
+    rig.hold(60.0f, 4000);
+    bool caya = rig.dev.current_mode_ == MODE_CAY_DEMLEME && !rig.filtre_kahve.state && rig.btn_leds() == KIRMIZI;
+    rig.filtre_kahve.publish_state(true);
+    rig.hold(60.0f, 4000);
+    bool kahveye = rig.dev.current_mode_ == MODE_FILTRE_KAHVE && rig.cay.current_option() == "KAPALI" && rig.btn_leds() == KAHVE_KIRMIZI;
+    rig.filtre_kahve.publish_state(false);
+    rig.hold(60.0f, 4000);
+    bool kapali = rig.dev.current_mode_ == MODE_KAPALI && rig.relays_off();
+    // KRITIK
+    Thermal dry{25.0f, 6.0f, 0.5f, false};
+    rig.hold(25.0f, 4000);
+    rig.su_kaynatma.publish_state(true);
+    run_thermal(rig, dry, 60000, nullptr, [&] { return rig.first_kritik_ms != 0; });
+    rig.hold(dry.t, 2000);
+    rig.filtre_kahve.publish_state(true);
+    rig.hold(60.0f, 4000);
+    bool red = rig.dev.kettle_durumu_ == KRITIK && rig.dev.current_mode_ == MODE_KAPALI && !rig.filtre_kahve.state && rig.relays_off();
+    printf("  ölçüm: kahve → çay %s · çay → kahve %s · kapatma %s · KRITIK'te kahve %s\n", caya ? "tamam" : "OLMADI", kahveye ? "tamam" : "OLMADI",
+           kapali ? "tamam" : "OLMADI", red ? "reddedildi" : "REDDEDİLMEDİ");
+    check(caya, "filtre kahve açıkken çay başlatılınca kahve kapandı, çay açıldı");
+    check(kahveye, "çay açıkken filtre kahve başlatılınca çay kapandı, kahve açıldı");
+    check(kapali, "anahtarla kapatma");
+    check(red, "KRITIK'te filtre kahve reddedildi; anahtar kapalıya döndü");
+    check(rig.violations == 0, "ihlal yok");
+    return 0;
+  }
+#endif
+
   int usage()
   {
     printf("senaryolar: replay-aksam replay-yeniden az-su yarim-litre kuru az-su-sicrama tek-sicrama ardisik-sicrama toparlanma-adimi\n"
@@ -2036,7 +2298,8 @@ namespace
            "            cay-kettle-kaldir-demlerken cay-kettle-kaldir-sureli cay-ust-sinir algi-firtina otomatik-kapanma otomatik-kapanma-yok\n"
            "            replay-3eki-kaynatma kuru-sicak-tutmada cay-lamba-sirasi cay-lamba-seviye cay-fazla-basis\n"
            "            cay-ha-sicak-su kritik-bekleyen-basis ses-tetik-suresi cay-az-su\n"
-           "            mama-sicak-su mama-40 mama-ilik mama-yeniden mama-kaldirilmisken-sicak\n");
+           "            mama-sicak-su mama-40 mama-ilik mama-yeniden mama-kaldirilmisken-sicak\n"
+           "            cay-bos-hazne-sessiz kahve-su-bitince kahve-sureli kahve-tus kahve-bos-hazne kahve-gecis az-su-sessiz\n");
     return 2;
   }
 } // namespace
@@ -2055,6 +2318,8 @@ int main(int argc, char **argv)
     scenario_replay_yeniden();
   else if (s == "az-su")
     scenario_su_azligi(2.26f, true, true, 9000, "az su (yazarın ölçümü: 0.1 L ≈ 2.26 °C/sn) KRITIK'e geçiriyor");
+  else if (s == "az-su-sessiz")
+    scenario_su_azligi(2.26f, true, true, 9000, "az su, konuşma sesi kapalı: KRITIK'e geçiriyor", false);
   else if (s == "yarim-litre")
     scenario_su_azligi(1.41f, true, false, 0, "yarım litre (≈ 1.41 °C/sn) alarm vermiyor");
   else if (s == "kuru")
@@ -2102,6 +2367,20 @@ int main(int argc, char **argv)
     scenario_cay_su_bitince();
   else if (s == "cay-bos-hazne")
     scenario_cay_bos_hazne();
+  else if (s == "cay-bos-hazne-sessiz")
+    scenario_cay_bos_hazne(true);
+#ifdef CAYSEVER_ROBOTEA_FILTRE_KAHVE
+  else if (s == "kahve-su-bitince")
+    scenario_kahve_su_bitince(true);
+  else if (s == "kahve-sureli")
+    scenario_kahve_su_bitince(false);
+  else if (s == "kahve-tus")
+    scenario_kahve_tus();
+  else if (s == "kahve-bos-hazne")
+    scenario_kahve_bos_hazne();
+  else if (s == "kahve-gecis")
+    scenario_kahve_gecis();
+#endif
   else if (s == "cay-az-su")
     scenario_cay_az_su();
   else if (s == "mama-sicak-su")
