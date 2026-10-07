@@ -17,6 +17,7 @@
 #define CAYSEVER_ROBOTEA_DEMLENEMEDI 1
 #define CAYSEVER_ROBOTEA_MAMA_FABRIKA 1
 #define CAYSEVER_ROBOTEA_FILTRE_KAHVE 1
+#define CAYSEVER_ROBOTEA_HAM_NTC 1
 
 namespace esphome
 {
@@ -80,6 +81,9 @@ namespace esphome
       void set_mode(ActiveMode new_mode, int press_count);
 
       void set_ntc_sensor(sensor::Sensor *sensor) { this->ntc_sensor_ = sensor; }
+      // Süzgeçsiz NTC okuması (isteğe bağlı). Verilirse kettle'ın tabandan kaldırıldığı bu okumadan anlaşılır;
+      // sıcaklık kararları yine süzgeçli ntc_sensor_'dan verilir.
+      void set_ham_ntc_sensor(sensor::Sensor *sensor) { this->ham_ntc_sensor_ = sensor; }
       void set_su_kaynatma_switch(switch_::Switch *su_kaynatma_switch);
       void set_mama_suyu_switch(switch_::Switch *mama_suyu_switch);
       void set_filtre_kahve_switch(switch_::Switch *filtre_kahve_switch);
@@ -106,6 +110,7 @@ namespace esphome
 
     protected:
       sensor::Sensor *ntc_sensor_ = nullptr; // NTC sensörü (ESPHome'dan bağlanacak)
+      sensor::Sensor *ham_ntc_sensor_ = nullptr; // süzgeçsiz NTC okuması (isteğe bağlı): kettle algısı için
       switch_::Switch *su_kaynatma_switch_ = nullptr;
       switch_::Switch *mama_suyu_switch_ = nullptr;
       switch_::Switch *filtre_kahve_switch_ = nullptr;
@@ -170,6 +175,19 @@ namespace esphome
       void check_water_level();
       bool slope_is_sustained_();           // Su seviye eğimi: artış okumadan okumaya sürüyor mu (tek okuma sıçraması değil mi)
       void record_ntc_sample_(float value); // NTC'nin her yeni okumasını zamanıyla sakla
+
+      // Kettle'ın kaldırıldığını hızlı anlamak. Sıcaklık okuması uğultuya karşı ortanca süzgecinden geçtiği için
+      // (örn. 15 örnek, 2 sn'de bir yayın) kettle kaldırıldığında süzgeçli değer ancak 1-3 sn sonra bozulur ve
+      // lambalar o kadar geç söner. Süzgeçsiz okuma verilmişse ardışık HAM_KETTLE_ORNEK örnek "kettle yok"
+      // (NaN ya da 0 °C altı) gösterdiğinde KORUMA'ya hemen geçilir; tek tük bozuk örnek geçişe yetmez. Geri
+      // dönüşte ikisi de (ham ve süzgeçli) geçerli olmalıdır: ısıtma kararları süzgeçli değerle verilir.
+      void ham_ornek_(float value);
+      static constexpr uint8_t HAM_KETTLE_ORNEK = 3;
+      uint8_t ham_yok_sayac_{0};
+      uint8_t ham_var_sayac_{0};
+      bool ham_kettle_yok_{false};
+      uint32_t ham_geri_ms_{0}; // ham okumanın kettle'ı yeniden gördüğü an (0 = bu KORUMA'da ham algı devrede değildi)
+      bool koruma_lamba_geri_{false}; // KORUMA sürerken lambalar ham okumayla geri yakıldı (süzgeçli değer bekleniyor)
       // KRITIK'e neden girildiği. Su yetersizliği (eğim ya da sabit sınır) doğrulandıysa fabrika yazılımındaki gibi
       // "su ekleyin" klibi de çalınır; diğer sebeplerde yalnız alarm.
       enum KritikSebep : uint8_t

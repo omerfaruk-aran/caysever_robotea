@@ -51,6 +51,12 @@ namespace esphome
                 this->ntc_sensor_->add_on_state_callback([this](float value)
                                                          { this->record_ntc_sample_(value); });
             }
+            // Süzgeçsiz okuma verilmişse kettle'ın kaldırıldığı ondan, süzgecin gecikmesi beklenmeden anlaşılır
+            if (this->ham_ntc_sensor_ != nullptr)
+            {
+                this->ham_ntc_sensor_->add_on_state_callback([this](float value)
+                                                             { this->ham_ornek_(value); });
+            }
 
             // Ses pinlerini çıkış olarak ayarla ve başlangıç durumunu LOW yap
             for (int i = 0; i < 3; i++) // Burada `sound_pins_` 3 elemanlı bir dizi
@@ -110,7 +116,8 @@ namespace esphome
 
                 // NaN: ölçüm yok (açılışta ilk okuma öncesi / sensör hatası). Tüm karşılaştırmalar false
                 // döndüğü için aşağıdaki mod işleyicileri röleyi açabilir; koruma moduna al.
-                if (std::isnan(temperature) || temperature < 0.0f) // Anormal sıcaklık değeri
+                // ham_kettle_yok_: süzgeçsiz okuma kettle'ın kalktığını gösteriyor (süzgeçli değer henüz bozulmamış olabilir)
+                if (std::isnan(temperature) || temperature < 0.0f || this->ham_kettle_yok_) // Anormal sıcaklık değeri
                 {
                     if (this->kettle_durumu_ != KORUMA)
                     {
@@ -120,6 +127,8 @@ namespace esphome
 
                         this->kettle_durumu_ = KORUMA;
                         this->koruma_start_ms_ = this->current_time_;
+                        this->ham_geri_ms_ = 0;
+                        this->koruma_lamba_geri_ = false;
                         this->update_all_sensors();
 
                         // LED durumlarını kaydet
@@ -144,6 +153,27 @@ namespace esphome
                         this->relay_active_ = false;
                         this->dem_relay_active_ = false;
                     }
+                    else if (this->previous_mode_ != KRITIK)
+                    {
+                        // Kettle geri kondu (ham okuma görüyor) ama süzgeçli sıcaklık henüz toparlanmadı (1-3 sn sürer).
+                        // Lambalar hemen eski hâllerine döner; ısıtma ve demleme, güvenilir sıcaklık gelene kadar
+                        // (aşağıdaki NORMAL'e dönüş) başlamaz. Bu arada yeniden kaldırılırsa lambalar yine söner.
+                        const bool ham_geri = this->ham_ntc_sensor_ != nullptr && !this->ham_kettle_yok_ && this->ham_geri_ms_ != 0;
+                        if (ham_geri && !this->koruma_lamba_geri_)
+                        {
+                            digitalWrite(this->bay_led_pin_, bayled_previous_state);
+                            digitalWrite(this->dem_led_pin_, demled_previous_state);
+                            this->restore_mode_leds_();
+                            this->koruma_lamba_geri_ = true;
+                        }
+                        else if (!ham_geri && this->koruma_lamba_geri_)
+                        {
+                            this->control_led(-1);
+                            digitalWrite(this->dem_led_pin_, LOW);
+                            digitalWrite(this->bay_led_pin_, LOW);
+                            this->koruma_lamba_geri_ = false;
+                        }
+                    }
                 }
                 else
                 {
@@ -154,7 +184,10 @@ namespace esphome
                         // Önceki duruma dön
                         if (this->previous_mode_ == KRITIK)
                         {
-                            if (this->current_time_ - this->koruma_start_ms_ >= KRITIK_ONAY_MS)
+                            // Kettle'ın tabandan ayrı kaldığı süre. Ham algı devredeyse geri konduğu an ondan alınır:
+                            // süzgeçli değerin toparlanması 1-3 sn daha sürer ve kısa bir kaldırışı uzun gösterirdi.
+                            const uint32_t geri_ms = this->ham_geri_ms_ != 0 ? this->ham_geri_ms_ : this->current_time_;
+                            if (geri_ms - this->koruma_start_ms_ >= KRITIK_ONAY_MS)
                             {
                                 // Kettle bilerek kaldırılıp geri kondu: alarm onaylandı. KRITIK'e girerken bütün
                                 // işlemler ve mod kapatılmıştı; cihaz boşta kalır, hiçbir şey kendiliğinden sürmez.
@@ -2034,6 +2067,31 @@ namespace esphome
             if (water_low_detected)
             {
                 this->enter_critical_(KRITIK_SEBEP_SU_AZ);
+            }
+        }
+
+        // Süzgeçsiz NTC okumasının her örneği. Ardışık HAM_KETTLE_ORNEK örnek aynı şeyi söyleyince karar değişir.
+        void CayseverRobotea::ham_ornek_(float value)
+        {
+            const bool yok = std::isnan(value) || value < 0.0f;
+            if (yok)
+            {
+                this->ham_var_sayac_ = 0;
+                if (this->ham_yok_sayac_ < HAM_KETTLE_ORNEK)
+                    this->ham_yok_sayac_++;
+                if (this->ham_yok_sayac_ >= HAM_KETTLE_ORNEK)
+                    this->ham_kettle_yok_ = true;
+            }
+            else
+            {
+                this->ham_yok_sayac_ = 0;
+                if (this->ham_var_sayac_ < HAM_KETTLE_ORNEK)
+                    this->ham_var_sayac_++;
+                if (this->ham_var_sayac_ >= HAM_KETTLE_ORNEK && this->ham_kettle_yok_)
+                {
+                    this->ham_kettle_yok_ = false;
+                    this->ham_geri_ms_ = millis();
+                }
             }
         }
 

@@ -39,6 +39,7 @@ CONF_SU_BITTI_ALGISI_SWITCH = "su_bitti_algisi_switch"
 CONF_DEMLEME_HATTI_SENSOR = "demleme_hatti_sensor"
 CONF_OTOMATIK_KAPANMA = "otomatik_kapanma"
 CONF_MAMA_SUYU_SICAK_TUTMA = "mama_suyu_sicak_tutma"
+CONF_HAM_NTC_SENSOR = "ham_ntc_sensor"
 
 CAY_DEMLEME_LEVEL_OPTIONS = [
     "1/4",
@@ -117,6 +118,8 @@ CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(CayseverRobotea),
         cv.Required(CONF_SENSOR): cv.use_id(sensor.Sensor),
+        # Süzgeçsiz NTC okuması. Verilirse kettle'ın kaldırıldığı süzgecin gecikmesi beklenmeden anlaşılır.
+        cv.Optional(CONF_HAM_NTC_SENSOR): cv.use_id(sensor.Sensor),
         cv.Optional(CONF_SU_KAYNATMA): SU_KAYNATMA_SCHEMA,
         cv.Optional(CONF_MAMA_SUYU): MAMA_SUYU_SCHEMA,
         # Filtre kahve (tuş 2): çay demlemeyle aynı düzenek; su bitince 2 dk sonra hazır, 40 dk tazelik.
@@ -149,6 +152,10 @@ async def to_code(config):
     ntc_sensor = await cg.get_variable(config[CONF_SENSOR])
 
     cg.add(var.set_ntc_sensor(ntc_sensor))
+
+    if CONF_HAM_NTC_SENSOR in config:
+        ham_ntc = await cg.get_variable(config[CONF_HAM_NTC_SENSOR])
+        cg.add(var.set_ham_ntc_sensor(ham_ntc))
 
     if CONF_CAY_DEMLEME in config:
         conf = config[CONF_CAY_DEMLEME]
