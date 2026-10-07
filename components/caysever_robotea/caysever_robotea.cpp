@@ -287,13 +287,14 @@ namespace esphome
         {
             if (this->kritik_sound_active_ && this->kettle_durumu_ == KRITIK)
             {
-                if (this->current_time_ - this->kritik_sound_start_time_ >= 1000)
+                if (this->current_time_ - this->kritik_sound_start_time_ >= this->kritik_alarm_bekleme_ms_)
                 {
                     this->activate_sound(std::map<int, bool>{
                         {this->sound_pins_[0], true},
                         {this->sound_pins_[2], true},
                         {this->sound_pins_[1], false}});
                     this->kritik_sound_start_time_ = this->current_time_;
+                    this->kritik_alarm_bekleme_ms_ = KRITIK_ALARM_ARALIK_MS;
                 }
             }
             else if (this->kettle_durumu_ == NORMAL && this->kritik_sound_active_)
@@ -2032,7 +2033,7 @@ namespace esphome
             // --- 4. HATA TETİKLEME ---
             if (water_low_detected)
             {
-                this->enter_critical_();
+                this->enter_critical_(KRITIK_SEBEP_SU_AZ);
             }
         }
 
@@ -2096,7 +2097,7 @@ namespace esphome
         // KRITIK'e geçiş tek yerden yapılır: ısıtma ve demleme röleleri kapanır, bütün işlemler ve mod sıfırlanır,
         // alarm başlar. Çıkışta (1. tuşa uzun basış ya da kettle'ı kaldırıp geri koyma) cihaz boşta kalır; hiçbir mod
         // kendiliğinden devam etmez.
-        void CayseverRobotea::enter_critical_()
+        void CayseverRobotea::enter_critical_(KritikSebep sebep)
         {
             digitalWrite(this->relay_pin_, LOW);
             digitalWrite(this->demleme_relay_pin_, LOW);
@@ -2106,7 +2107,21 @@ namespace esphome
             this->kettle_durumu_ = KRITIK;
             this->kritik_sound_active_ = true;
             this->kritik_sound_start_time_ = this->current_time_;
+            this->kritik_alarm_bekleme_ms_ = KRITIK_ALARM_ARALIK_MS;
             this->play_button_sound();
+
+            // Su yetersizliği: "Konuşma Sesi" açıksa fabrika yazılımının bu durumda çaldığı "su ekleyin" klibi bir kez
+            // çalınır ve alarm klip bitene kadar bekler. Konuşma kapalıysa ya da sebep başkaysa alarm eskisi gibidir.
+            if (sebep == KRITIK_SEBEP_SU_AZ && this->konusma_sesi_switch_ != nullptr && this->konusma_sesi_switch_->state)
+            {
+                ESP_LOGW("CayseverRobotea", "KRITIK: su yetersiz; \"su ekleyin\" uyarısı çalınacak.");
+                this->kritik_alarm_bekleme_ms_ = KRITIK_SU_EKLE_ALARM_MS;
+                this->set_timeout("kritik_su_ekle", KRITIK_SU_EKLE_KLIP_MS, [this]()
+                                  {
+                    // Arada alarm onaylandıysa ya da kettle kaldırıldıysa konuşulmaz
+                    if (this->kettle_durumu_ == KRITIK)
+                        this->play_su_ekle_sound(); });
+            }
 
             // Switchleri ve donanımı kapat
             if (this->su_kaynatma_switch_)

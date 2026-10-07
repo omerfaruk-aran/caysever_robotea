@@ -170,7 +170,14 @@ namespace esphome
       void check_water_level();
       bool slope_is_sustained_();           // Su seviye eğimi: artış okumadan okumaya sürüyor mu (tek okuma sıçraması değil mi)
       void record_ntc_sample_(float value); // NTC'nin her yeni okumasını zamanıyla sakla
-      void enter_critical_();               // KRITIK'e geçiş: röleler, işlemler ve mod kapanır, alarm başlar
+      // KRITIK'e neden girildiği. Su yetersizliği (eğim ya da sabit sınır) doğrulandıysa fabrika yazılımındaki gibi
+      // "su ekleyin" klibi de çalınır; diğer sebeplerde yalnız alarm.
+      enum KritikSebep : uint8_t
+      {
+        KRITIK_SEBEP_ASIRI_ISINMA, // 120 °C kesmesi
+        KRITIK_SEBEP_SU_AZ         // check_water_level(): kettle'da su yok ya da çok az
+      };
+      void enter_critical_(KritikSebep sebep = KRITIK_SEBEP_ASIRI_ISINMA); // KRITIK'e geçiş: röleler, işlemler ve mod kapanır, alarm başlar
       void restore_mode_leds_();            // Aktif moda ve aşamasına göre tuş LED'ini geri yak
       void handle_critical_mode_leds();
       void handle_exit_critical_mode();
@@ -222,6 +229,16 @@ namespace esphome
       // onaylanmış sayılır; daha kısası (tek okumalık sensör kaybı) KRITIK'i bozmaz.
       uint32_t koruma_start_ms_{0};
       static constexpr uint32_t KRITIK_ONAY_MS = 3000;
+
+      // KRITIK alarmı saniyede bir bip verir. Su yetersizliğinde "Konuşma Sesi" açıksa önce "su ekleyin" klibi
+      // çalınır: klip, girişteki bip'lerden KRITIK_SU_EKLE_KLIP_MS sonra tetiklenir ve alarmın ilk bip'i
+      // KRITIK_SU_EKLE_ALARM_MS'ye ertelenir (her tetik çipte çalan klibi keser). Klip gerçek cihazda 4-5 sn sürüyor
+      // (kulakla ölçüldü); alarm klibin başlamasından 6,4 sn sonra gelir. Röleler girişte hemen kapanır; ertelenen
+      // yalnız sestir.
+      static constexpr uint32_t KRITIK_ALARM_ARALIK_MS = 1000;
+      static constexpr uint32_t KRITIK_SU_EKLE_KLIP_MS = 600;
+      static constexpr uint32_t KRITIK_SU_EKLE_ALARM_MS = 7000;
+      uint32_t kritik_alarm_bekleme_ms_{KRITIK_ALARM_ARALIK_MS}; // bir sonraki alarm bip'ine kadar beklenecek süre
 
       // Röle ve sensör pinleri
       int relay_pin_ = 17;         // Su kaynatma rölesi GPIO17

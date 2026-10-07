@@ -545,9 +545,58 @@ namespace
   // ---------------------------------------------------------------------------------------------
   // Su azlığı algılaması: gerçek tehlike hâlâ yakalanıyor mu?
   // ---------------------------------------------------------------------------------------------
-  int scenario_su_azligi(float rate, bool boils, bool expect_kritik, uint32_t max_delay_ms, const char *what)
+  // KRITIK'e girildikten sonraki ses tetikleri. Girişteki bip'ler (ilk yarım saniye) alarm sayılmaz.
+  struct KritikSes
+  {
+    int su_ekle = 0;           // "su ekleyin" klibi (19+32) kaç kez tetiklendi
+    uint32_t su_ekle_ms = 0;   // KRITIK'ten kaç ms sonra
+    uint32_t sessizlik_ms = 0; // klipten sonraki ilk tetiğe kadar geçen süre (0 = başka tetik gelmedi)
+    int alarm = 0;             // alarm bip'i sayısı
+    uint32_t ilk_alarm_ms = 0; // ilk alarm bip'i KRITIK'ten kaç ms sonra
+  };
+  KritikSes kritik_sesleri(const Rig &rig)
+  {
+    KritikSes k;
+    uint32_t klip_an = 0;
+    for (const auto &snd : rig.sounds)
+    {
+      if (rig.first_kritik_ms == 0 || snd.first < rig.first_kritik_ms)
+        continue;
+      uint32_t el = snd.first - rig.first_kritik_ms;
+      if (snd.second == "19+32")
+      {
+        if (k.su_ekle++ == 0)
+        {
+          k.su_ekle_ms = el;
+          klip_an = snd.first;
+        }
+        continue;
+      }
+      if (klip_an && !k.sessizlik_ms)
+        k.sessizlik_ms = snd.first - klip_an;
+      if (snd.second == "4+32" && el >= 500)
+      {
+        if (k.alarm++ == 0)
+          k.ilk_alarm_ms = el;
+      }
+    }
+    return k;
+  }
+  // Baştan beri "su ekleyin" klibinin kaç kez tetiklendiği (KRITIK olsun olmasın)
+  int su_ekle_sayisi(const Rig &rig)
+  {
+    int n = 0;
+    for (const auto &snd : rig.sounds)
+      if (snd.second == "19+32")
+        n++;
+    return n;
+  }
+
+  int scenario_su_azligi(float rate, bool boils, bool expect_kritik, uint32_t max_delay_ms, const char *what, bool konusma = true)
   {
     Rig rig;
+    if (!konusma)
+      rig.konusma_sesi.publish_state(false);
     Thermal th{25.0f, rate, 0.02f, boils};
     rig.hold(25.0f, 4000);
     rig.su_kaynatma.publish_state(true);
@@ -561,11 +610,31 @@ namespace
       check(rig.first_kritik_ms != 0, what);
       check(dly <= max_delay_ms, "algılama gecikmesi sınırın içinde");
       check(rig.relays_off(), "KRITIK'te iki röle de kapalı");
+      // Su yetersizliğinde "su ekleyin" klibi: konuşma açıksa bir kez çalar ve alarm onu kesmez; kapalıysa alarm eskisi gibi
+      rig.hold(th.t, 12000);
+      KritikSes k = kritik_sesleri(rig);
+      printf("  ölçüm (konuşma %s): \"su ekleyin\" %d kez (KRITIK'ten %.1f sn sonra) · klipten sonraki ilk tetik %.1f sn sonra · ilk alarm bip'i %.1f sn'de · 12 sn'de %d alarm bip'i\n",
+             konusma ? "açık" : "kapalı", k.su_ekle, k.su_ekle_ms / 1000.0, k.sessizlik_ms / 1000.0, k.ilk_alarm_ms / 1000.0, k.alarm);
+      if (konusma)
+      {
+        check(k.su_ekle == 1, "\"su ekleyin\" klibi bir kez çaldı");
+        check(k.su_ekle_ms >= 500 && k.su_ekle_ms <= 700, "klip, girişteki bip'lerden sonra tetiklendi");
+        // Klip gerçek cihazda 4-5 sn sürüyor: ardından en az 6 sn hiçbir tetik gelmemeli
+        check(k.sessizlik_ms >= 6000, "klipten sonraki 6 sn'de başka tetik yok: alarm konuşmayı kesmedi");
+        check(k.alarm >= 3, "alarm klipten sonra saniyede bir sürüyor");
+      }
+      else
+      {
+        check(k.su_ekle == 0, "konuşma kapalı: klip çalmadı");
+        check(k.ilk_alarm_ms >= 900 && k.ilk_alarm_ms <= 1100 && k.alarm >= 8, "alarm eskisi gibi: ilk bip 1 sn'de, sonra saniyede bir");
+      }
+      check(rig.relays_off() && rig.dev.kettle_durumu_ == KRITIK && rig.violations == 0, "12 sn sonra hâlâ KRITIK, röleler kapalı");
     }
     else
     {
       check(rig.first_kritik_ms == 0, what);
       check(rig.dev.su_kaynatma_durumu_ == SU_KAYNATMA_SICAKLIK_KORUMA, "su kaynadı ve sıcak tutmaya geçildi");
+      check(su_ekle_sayisi(rig) == 0, "\"su ekleyin\" hiç çalmadı");
     }
     check(rig.violations == 0, "NORMAL dışındaki hiçbir anda röle açık kalmadı");
     return 0;
@@ -585,6 +654,8 @@ namespace
     check(rig.first_kritik_ms != 0, "az su, araya tek bozuk okuma girse de yakalanıyor");
     check(dly <= 16000, "en geç bir pencere (7 sn) gecikmeyle");
     check(rig.relays_off() && rig.violations == 0, "röleler kapalı, ihlal yok");
+    rig.hold(th.t, 3000);
+    check(kritik_sesleri(rig).su_ekle == 1, "\"su ekleyin\" klibi bir kez çaldı");
     return 0;
   }
 
@@ -653,6 +724,7 @@ namespace
            rig.first_kritik_ms ? ("röle açıldıktan " + std::to_string((rig.first_kritik_ms - r) / 1000.0).substr(0, 4) + " sn sonra VAR").c_str() : "yok",
            rig.tazelik.state.c_str(), rig.mod_durumu.state.c_str());
     check(rig.first_kritik_ms == 0, "bozuk okuma yanlış KRITIK alarmı üretmedi");
+    check(su_ekle_sayisi(rig) == 0, "\"su ekleyin\" hiç çalmadı");
     check(rig.tazelik.state == "Taze" && rig.dev.cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA, "çay sıcak tutmada ve Taze kalmaya devam ediyor");
     check(rig.violations == 0, "ihlal yok");
     return 0;
@@ -817,6 +889,12 @@ namespace
     check(rig.relays_off(), "iki röle de kapalı");
     check(rig.aktif_mod.state == "KAPALI" && !rig.su_kaynatma.state && rig.dev.su_kaynatma_durumu_ == SU_KAYNATMA_KAPALI, "mod kapandı, HA'da anahtar kapalı");
     check(rig.dev.kritik_sound_active_, "alarm sesi etkin");
+    {
+      KritikSes k = kritik_sesleri(rig);
+      printf("  ölçüm: \"su ekleyin\" %d kez · ilk alarm bip'i %.1f sn'de\n", k.su_ekle, k.ilk_alarm_ms / 1000.0);
+      check(k.su_ekle == 0, "120 °C kesmesi başka bir sebep: \"su ekleyin\" çalmadı");
+      check(k.ilk_alarm_ms >= 900 && k.ilk_alarm_ms <= 1100, "alarm eskisi gibi 1 sn'de başladı");
+    }
     // Soğudu; kullanıcı 1. tuşa 1,3 sn basarak alarmı onayladı
     rig.hold(60.0f, 4000);
     rig.press(0, 1300);
@@ -1601,6 +1679,7 @@ namespace
     check(rig.first_kritik_ms != 0, "kuru kettle sıcak tutmada KRITIK'e geçiriyor");
     check(t_at_kritik < 128.0f, "kesme, sınırı geçen ilk okumada gerçekleşti (115 °C + bir okuma aralığı)");
     check(rig.relays_off() && rig.aktif_mod.state == "KAPALI" && rig.dev.kritik_sound_active_, "röleler ve mod kapalı, alarm sesli");
+    check(kritik_sesleri(rig).su_ekle == 1, "sabit sınırla yakalanan kuru kettle'da da \"su ekleyin\" bir kez çaldı");
     check(rig.violations == 0, "ihlal yok");
     return 0;
   }
@@ -2220,7 +2299,7 @@ namespace
            "            replay-3eki-kaynatma kuru-sicak-tutmada cay-lamba-sirasi cay-lamba-seviye cay-fazla-basis\n"
            "            cay-ha-sicak-su kritik-bekleyen-basis ses-tetik-suresi cay-az-su\n"
            "            mama-sicak-su mama-40 mama-ilik mama-yeniden mama-kaldirilmisken-sicak\n"
-           "            cay-bos-hazne-sessiz kahve-su-bitince kahve-sureli kahve-tus kahve-bos-hazne kahve-gecis\n");
+           "            cay-bos-hazne-sessiz kahve-su-bitince kahve-sureli kahve-tus kahve-bos-hazne kahve-gecis az-su-sessiz\n");
     return 2;
   }
 } // namespace
@@ -2239,6 +2318,8 @@ int main(int argc, char **argv)
     scenario_replay_yeniden();
   else if (s == "az-su")
     scenario_su_azligi(2.26f, true, true, 9000, "az su (yazarın ölçümü: 0.1 L ≈ 2.26 °C/sn) KRITIK'e geçiriyor");
+  else if (s == "az-su-sessiz")
+    scenario_su_azligi(2.26f, true, true, 9000, "az su, konuşma sesi kapalı: KRITIK'e geçiriyor", false);
   else if (s == "yarim-litre")
     scenario_su_azligi(1.41f, true, false, 0, "yarım litre (≈ 1.41 °C/sn) alarm vermiyor");
   else if (s == "kuru")
