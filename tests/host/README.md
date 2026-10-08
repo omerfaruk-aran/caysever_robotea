@@ -179,8 +179,27 @@ sürüyor (kulakla); alarm klibin başlamasından 6,4 sn sonra geliyor. Bu yol g
 | `yarim-litre`, `tek-sicrama`, `ardisik-sicrama`, `toparlanma-adimi` — alarm verilmeyen durumlar | — | "su ekleyin" hiç çalmıyor |
 | **Toplam (bütün senaryolar)** | **53 / 57** | **57 / 57** |
 
+### Kettle'ın kaldırıldığını hızlı anlamak (`ham_ntc_sensor`)
+
+"Önce" = yukarıdaki "sonra". Bileşen kettle'ın kaldırıldığını sıcaklık okumasından anlıyor (0 °C altı ya da okuma yok).
+Okuma uğultuya karşı ortanca süzgecinden geçtiği için (15 örnek, 2 sn'de bir yayın) kaldırılan kettle ancak 1–3 sn sonra
+fark ediliyordu; gerçek cihazda lambaların geç söndüğü görüldü (fabrika yazılımında hemen sönerdi). Süzgeçsiz okuma
+`ham_ntc_sensor` ile ayrıca verilirse ardışık üç örnek (0,4 sn) "kettle yok" gösterdiğinde KORUMA'ya geçilir. Geri
+konunca lambalar da ham okumayla hemen yanar; ısıtma ve demleme süzgeçli sıcaklık toparlanana kadar (KORUMA) başlamaz. Bu
+senaryolar yaml'daki zinciri modeller: ham örnek 125 ms'de bir, süzgeçli değer son 15 örneğin ortancası.
+
+| Senaryo | Önce | Sonra |
+|---|---|---|
+| `kettle-hizli-algi` — kaynatırken kettle 16 kez kaldırılır (yayın döngüsünün her anında), ham okuma tanımlı | giriş yok: 1.00 – 2.88 sn | lambalar ve röleler 0.38 sn'de kapanıyor; geri konunca lambalar 0.38 sn'de yanıyor, ısıtma 1.00 – 2.88 sn'de sürüyor (değişmedi); arada ısıtıcı hiç açılmıyor |
+| `kettle-hizli-algi-yok` — aynısı, ham okuma tanımsız | 1.00 – 2.88 sn | 1.00 – 2.88 sn (değişmedi) |
+| `kettle-kisa-kopma` — tek bozuk örnek, tek NaN, iki ardışık bozuk örnek; sonra üç ardışık | giriş yok | bir-iki bozuk örnek hiçbir şey yapmıyor; üç ardışık örnek kısa bir KORUMA, okuma düzelince kaynatma sürüyor |
+| `kettle-hizli-kritik-onay` — KRITIK'te 1,5 sn ve 4 sn'lik kaldırış | giriş yok | 1,5 sn onaylamıyor (döngünün hiçbir anında), 4 sn onaylıyor; süre ham okumadan ölçülüyor |
+| `kettle-geri-lamba` — çay sıcak tutmada: kaldır, koy, süzgeç toparlanmadan yeniden kaldır, koy | giriş yok | mod lambası ve tazelik lambası her seferinde 0.38 sn'de sönüp yanıyor; lambalar yanarken durum KORUMA, röleler kapalı; sonra NORMAL, çay Taze |
+| **Toplam (bütün senaryolar)** | **58 / 62** | **62 / 62** |
+
 `SRC=<eski sürüm> ./run.sh` ile eski sürümler de derlenebilir: bu sürümdeki seçenekler `CAYSEVER_ROBOTEA_SU_BITTI_ALGISI`,
-`CAYSEVER_ROBOTEA_SES_DENEME`, `CAYSEVER_ROBOTEA_MAMA_FABRIKA` ve `CAYSEVER_ROBOTEA_FILTRE_KAHVE` işaretleriyle korunur.
+`CAYSEVER_ROBOTEA_SES_DENEME`, `CAYSEVER_ROBOTEA_MAMA_FABRIKA`, `CAYSEVER_ROBOTEA_FILTRE_KAHVE` ve
+`CAYSEVER_ROBOTEA_HAM_NTC` işaretleriyle korunur.
 
 **Tarama** (`./run.sh tarama`): 14 ısınma hızı (1.0–6.0 °C/sn) × 4 örnekleme fazı × 3 profil (doğrusal, hızlanan,
 ±0.3 °C gürültülü) = 168 temiz ısınma durumu. Karar ve alarm anı iki sürümde **168/168 aynı** (144'ünde alarm). Yani
@@ -195,7 +214,7 @@ veriyor. Eşiğe dokunulmadı.
 Donanımın kendisi: rölenin gerçekten bırakması, sensör devresinin elektriksel davranışı, ESP32'nin açılıştaki pin
 durumları, ses çipi, Wi-Fi olayları. Bunlar yalnız cihazda görülür.
 
-Sıcaklık süzgeci: düzenek bileşene sıcaklığı doğrudan, 2 sn'de bir verir; `example.yaml`'daki ADC ortanca süzgeci
-(125 ms'de bir örnek, son 15 örneğin ortancası) modellenmez. Gerçek cihazda bileşenin gördüğü her değer son ~2 sn'nin
+Sıcaklık süzgeci: düzenek bileşene sıcaklığı doğrudan, 2 sn'de bir verir; `example.yaml`'daki ortanca süzgeci
+(125 ms'de bir örnek, son 15 örneğin ortancası) yalnız `kettle-*` senaryolarında modellenir. Gerçek cihazda bileşenin gördüğü her değer son ~2 sn'nin
 ortancasıdır, yani güvenlik kararları (eğim, 115 °C, 120 °C) en çok bir okuma aralığı kadar gecikmiş veriyle verilir;
 senaryolardaki "bir okuma (2 sn) gecikir" payı bunu da kapsar.

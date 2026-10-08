@@ -58,6 +58,10 @@ Proje kapsamında cihaz üzerinde yapılan değişiklikler, cihazın garanti kap
 ### 🔄 **Kettle Koruma Modu**
 - Kettle kaldırıldığında geçici koruma modu.
 - Yerine koyulduğunda işlemler kaldığı yerden devam eder.
+- **Hızlı algı (isteğe bağlı):** sıcaklık okuması uğultuya karşı süzgeçten geçtiği için kettle'ın kaldırıldığı 1–3 sn
+  geç anlaşılır ve lambalar o kadar geç söner. Yaml'da `ham_ntc_sensor` ile süzgeçsiz okuma da verilirse (örneği
+  `example.yaml`'da) kaldırıldığı ~0,4 sn'de anlaşılır; geri konunca lambalar da ~0,4 sn'de eski hâline döner.
+  Sıcaklık kararları yine süzgeçli değerle verilir: ısıtmanın sürmesi süzgeçli değerin toparlanmasını (1–3 sn) bekler.
 
 ### 🔊 **Sesli ve Görsel Geri Bildirim**
 - **Buton Sesi:** Kullanıcı geri bildirimi için dokunmatik buton sesleri.  

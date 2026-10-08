@@ -54,6 +54,8 @@ external_components:
 caysever_robotea:
   id: caysever
   sensor: ntc_temperature
+  # İsteğe bağlı: süzgeçsiz okuma. Verilirse kettle'ın kaldırıldığı süzgecin gecikmesi beklenmeden (~0,4 sn) anlaşılır.
+  ham_ntc_sensor: ntc_ham
   kettle_state_sensor:
     name: "Kettle Durumu"
   mode_state_sensor:
@@ -128,14 +130,11 @@ sensor:
     attenuation: 12db
     # Okumaya şebeke uğultusu karışıyor; 2 sn'de bir tek örnek alınınca birkaç °C'lik yavaş bir dalgalanma olarak
     # görünür. 125 ms'de bir örnek alınıp son 15 örneğin ortancası kullanılır: uğultu ve tek tük bozuk örnekler elenir.
-    # Bileşene değer yine 2 sn'de bir gelir (16 × 125 ms). Açılıştaki ilk değer de pencere dolunca yayınlanır; tek bir
-    # ham örnek hiçbir zaman bileşene ulaşmaz (o âna kadar okuma yoktur, bileşen KORUMA'da bekler).
+    # Bileşene sıcaklık yine 2 sn'de bir gelir (16 × 125 ms). Açılıştaki ilk değer de pencere dolunca yayınlanır; sıcaklık
+    # kararları hiçbir zaman tek bir ham örnekle verilmez (o âna kadar okuma yoktur, bileşen KORUMA'da bekler).
+    # Süzgeç aşağıda, "NTC Sıcaklık"tadır: burada olsaydı kettle'ın kaldırıldığı da 1-3 sn geç anlaşılırdı. Ham okuma
+    # (ntc_ham) bileşene ham_ntc_sensor ile ayrıca verilir ve yalnız kettle'ın yerinde olup olmadığı için kullanılır.
     update_interval: 125ms
-    filters:
-      - median:
-          window_size: 15
-          send_every: 16
-          send_first_at: 16
   - platform: resistance
     sensor: adc_sensor
     configuration: DOWNSTREAM  # Sabit direnç aşağı yönlü bağlandı
@@ -143,12 +142,20 @@ sensor:
     id: resistance_sensor
   - platform: ntc
     sensor: resistance_sensor
-    name: "NTC Sıcaklık"
+    id: ntc_ham  # süzgeçsiz, 125 ms'de bir; adı olmadığı için Home Assistant'a gönderilmez
     calibration:
       b_constant: 3950
       reference_temperature: 25°C
       reference_resistance: 34000
+  - platform: copy
+    source_id: ntc_ham
+    name: "NTC Sıcaklık"
     id: ntc_temperature
+    filters:
+      - median:
+          window_size: 15
+          send_every: 16
+          send_first_at: 16
 
 # İsteğe bağlı tanılama: ses çipindeki klipleri su kaynatmadan dener. Ses anahtarlarına bakmaz, ısıtıcıya dokunmaz.
 # Maske: 1 = GPIO4, 2 = GPIO19, 4 = GPIO32 (toplanır). 5 = bip, 4 = "su kaynadı", 1 = demleme başlıyor,

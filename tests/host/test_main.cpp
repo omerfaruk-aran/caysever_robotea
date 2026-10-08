@@ -9,6 +9,7 @@
 #include <WiFi.h>
 
 #include <algorithm>
+#include <deque>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -150,6 +151,8 @@ namespace
   {
     Exposed dev;
     sensor::Sensor ntc, tazelik_kalan;
+    sensor::Sensor ham_ntc; // süzgeçsiz NTC okuması (yaml'da ham_ntc_sensor)
+    bool has_ham = false;   // bu derlemede ham okuma girişi var ve istenmiş
     switch_::Switch su_kaynatma, mama_suyu, filtre_kahve, buton_sesi, konusma_sesi, su_kontrol, su_bitti;
     sensor::Sensor demleme_hatti;
     BrewHw hw;
@@ -173,8 +176,17 @@ namespace
     int sound_pulses = 0;        // ses çipine giden tetik sayısı (GPIO4 yükselen kenar)
     int last_sound_pin = LOW;
 
-    explicit Rig(bool with_select = true, bool su_kontrol_on = true, bool brew_sense = false, uint32_t auto_off_ms = 0)
+    explicit Rig(bool with_select = true, bool su_kontrol_on = true, bool brew_sense = false, uint32_t auto_off_ms = 0, bool ham = false)
     {
+#ifdef CAYSEVER_ROBOTEA_HAM_NTC
+      if (ham)
+      {
+        dev.set_ham_ntc_sensor(&ham_ntc);
+        has_ham = true;
+      }
+#else
+      (void)ham;
+#endif
 #ifdef CAYSEVER_ROBOTEA_SU_BITTI_ALGISI
       if (brew_sense)
       {
@@ -2289,6 +2301,268 @@ namespace
   }
 #endif
 
+  // ---------------------------------------------------------------------------------------------
+  // Kettle'ın kaldırıldığını hızlı anlamak (ham NTC okuması)
+  // ---------------------------------------------------------------------------------------------
+  // yaml'daki sıcaklık zincirinin modeli: ham örnek 125 ms'de bir gelir; süzgeçli sıcaklık son 15 ham örneğin
+  // ortancasıdır ve 16 örnekte bir (2 sn) yayınlanır. Ham giriş tanımlıysa her örnek ona da gider.
+  const uint32_t HAM_MS = 125;
+  const float KETTLE_YOK = -9.2f; // kettle kaldırılmışken gerçek cihazdaki okuma
+  struct HamZincir
+  {
+    std::deque<float> pencere;
+    int sayac = 0;
+    void ornek(Rig &rig, float v)
+    {
+      if (rig.has_ham)
+        rig.ham_ntc.publish_state(v);
+      pencere.push_back(v);
+      if (pencere.size() > 15)
+        pencere.pop_front();
+      if (++sayac >= 16)
+      {
+        sayac = 0;
+        std::vector<float> srt(pencere.begin(), pencere.end());
+        std::sort(srt.begin(), srt.end());
+        rig.feed(srt[srt.size() / 2]);
+      }
+      for (int i = 0; i < 5; i++)
+        rig.step(25);
+    }
+    void sur(Rig &rig, float v, uint32_t ms)
+    {
+      for (uint32_t el = 0; el < ms; el += HAM_MS)
+        ornek(rig, v);
+    }
+    // Süzgeçli yayının üzerinden tam `faz` örnek geçene kadar sürer (kaldırma anını döngünün her yerine koyabilmek için)
+    void faza_gel(Rig &rig, float v, int faz)
+    {
+      do
+        ornek(rig, v);
+      while (sayac != faz);
+    }
+  };
+
+  // Su kaynatma açıkken kettle 16 kez kaldırılır; her seferinde süzgeçli yayın döngüsünün başka bir anında. Kaldırıldıktan
+  // kaç ms sonra KORUMA'ya geçildiği (lambaların söndüğü an) ve geri konduktan kaç ms sonra işin sürdüğü ölçülür.
+  int scenario_kettle_hizli_algi(bool ham)
+  {
+    Rig rig(true, true, false, 0, ham);
+    HamZincir z;
+    z.sur(rig, 60.0f, 6000);
+    rig.su_kaynatma.publish_state(true);
+    z.sur(rig, 60.0f, 6000);
+    std::string led_once = rig.btn_leds();
+    check(rig.dev.kettle_durumu_ == NORMAL && digitalRead(RELAY) == HIGH && led_once != "00000", "hazırlık: kaynatma sürüyor, röle açık, mod lambası yanıyor");
+    uint32_t min_ms = 0xFFFFFFFF, max_ms = 0, geri_min = 0xFFFFFFFF, geri_max = 0, lamba_min = 0xFFFFFFFF, lamba_max = 0;
+    int kacan = 0, karanlik_degil = 0, role_acik = 0, donmeyen = 0, erken_role = 0;
+    for (int faz = 0; faz < 16; faz++)
+    {
+      z.faza_gel(rig, 60.0f, faz);
+      // kaldırıldı
+      uint32_t t0 = millis(), t_koruma = 0;
+      for (int i = 0; i < 48; i++) // 6 sn
+      {
+        z.ornek(rig, KETTLE_YOK);
+        if (!t_koruma && rig.dev.kettle_durumu_ == KORUMA)
+        {
+          t_koruma = millis();
+          if (!rig.btn_leds_all_off() || digitalRead(DEM_LED) != LOW || digitalRead(BAY_LED) != LOW)
+            karanlik_degil++;
+          if (!rig.relays_off())
+            role_acik++;
+        }
+      }
+      if (!t_koruma)
+      {
+        kacan++;
+        continue;
+      }
+      min_ms = std::min(min_ms, t_koruma - t0);
+      max_ms = std::max(max_ms, t_koruma - t0);
+      // geri kondu
+      uint32_t t1 = millis(), t_normal = 0, t_lamba = 0;
+      for (int i = 0; i < 64; i++) // 8 sn
+      {
+        z.ornek(rig, 60.0f);
+        if (!t_lamba && rig.btn_leds() == led_once)
+          t_lamba = millis();
+        if (!t_normal && rig.dev.kettle_durumu_ == NORMAL)
+          t_normal = millis();
+        // lambalar yanmış olsa da süzgeçli sıcaklık gelene kadar (KORUMA) ısıtıcı açılmamalı
+        if (rig.dev.kettle_durumu_ != NORMAL && !rig.relays_off())
+          erken_role++;
+      }
+      if (!t_normal || !t_lamba || rig.btn_leds() != led_once || digitalRead(RELAY) != HIGH)
+        donmeyen++;
+      else
+      {
+        geri_min = std::min(geri_min, t_normal - t1);
+        geri_max = std::max(geri_max, t_normal - t1);
+        lamba_min = std::min(lamba_min, t_lamba - t1);
+        lamba_max = std::max(lamba_max, t_lamba - t1);
+      }
+    }
+    printf("  ölçüm (ham okuma %s): 16 kaldırışta KORUMA'ya geçiş %.2f – %.2f sn sonra · geri konunca lambalar %.2f – %.2f sn, NORMAL (ısıtma) %.2f – %.2f sn sonra · kaçan %d · ihlal %ld\n",
+           rig.has_ham ? "var" : "yok", min_ms / 1000.0, max_ms / 1000.0, lamba_min / 1000.0, lamba_max / 1000.0, geri_min / 1000.0, geri_max / 1000.0, kacan,
+           rig.violations);
+    check(kacan == 0, "her kaldırışta KORUMA'ya geçildi");
+    check(karanlik_degil == 0 && role_acik == 0, "KORUMA'ya geçildiği anda bütün lambalar sönük, röleler kapalı");
+    if (ham)
+    {
+      check(max_ms <= 500, "kettle kaldırılınca lambalar en geç yarım saniyede sönüyor");
+      check(lamba_max <= 500, "geri konunca lambalar en geç yarım saniyede eski hâline dönüyor");
+      check(geri_min >= 900, "ısıtma süzgeçli sıcaklık toparlanmadan başlamıyor (en az 1 sn)");
+    }
+    else
+    {
+      check(min_ms >= 900 && max_ms <= 3100, "ham okuma yokken eskisi gibi: süzgecin gecikmesi kadar (1-3 sn)");
+      check(lamba_min >= 900 && lamba_max <= 3100, "ham okuma yokken lambalar da eskisi gibi NORMAL'e dönüşte yanıyor");
+    }
+    check(erken_role == 0, "KORUMA sürerken ısıtıcı hiç açılmadı");
+    check(donmeyen == 0, "geri konunca her seferinde NORMAL, mod lambası eski hâlinde, kaynatma sürüyor");
+    check(rig.dev.current_mode_ == MODE_SU_KAYNATMA && rig.first_kritik_ms == 0, "mod açık kaldı, alarm yok");
+    check(rig.violations == 0, "ihlal yok");
+    return 0;
+  }
+
+  // Çay sıcak tutmadayken (mod lambası beyaz, tazelik lambası yanık) kettle kaldırılıp konur; süzgeçli sıcaklık toparlanmadan
+  // bir kez daha kaldırılıp konur. Lambalar her seferinde ham okumayla hemen söner ve yanar; ısıtma süzgeçli değeri bekler.
+  int scenario_kettle_geri_lamba()
+  {
+    Rig rig(true, true, false, 0, true);
+    Thermal th{60.0f, 0.30f, 0.05f, true};
+    brew_to_keepwarm(rig, th);
+    HamZincir z;
+    z.sur(rig, 97.0f, 6000);
+    std::string led_once = rig.btn_leds();
+    int dem_once = digitalRead(DEM_LED), bay_once = digitalRead(BAY_LED);
+    check(rig.has_ham, "bu sürümde ham okuma girişi var");
+    check(rig.dev.kettle_durumu_ == NORMAL && led_once != "00000" && dem_once == HIGH, "hazırlık: çay sıcak tutmada, mod lambası ve Dem (taze) lambası yanıyor");
+    auto yanik = [&] { return rig.btn_leds() == led_once && digitalRead(DEM_LED) == dem_once && digitalRead(BAY_LED) == bay_once; };
+    auto sonuk = [&] { return rig.btn_leds_all_off() && digitalRead(DEM_LED) == LOW && digitalRead(BAY_LED) == LOW; };
+    // adım adım ilerleyip koşulun sağlandığı ana kadar geçen süreyi ölçer (bulunamazsa 0xFFFFFFFF)
+    auto bekle = [&](float v, uint32_t ms, const std::function<bool()> &kosul) {
+      uint32_t t0 = millis(), bulundu = 0xFFFFFFFF;
+      for (uint32_t el = 0; el < ms; el += HAM_MS)
+      {
+        z.ornek(rig, v);
+        if (bulundu == 0xFFFFFFFF && kosul())
+          bulundu = millis() - t0;
+      }
+      return bulundu;
+    };
+    z.faza_gel(rig, 97.0f, 1);                              // süzgeçli yayından hemen sonra kaldırılır: en uzun gecikmeli durum
+    uint32_t sondu1 = bekle(KETTLE_YOK, 5000, sonuk);       // 5 sn kaldırıldı
+    uint32_t yandi1 = bekle(97.0f, 750, yanik);             // geri kondu; 0,75 sn sonra yeniden kaldırılacak
+    bool hala_koruma = rig.dev.kettle_durumu_ == KORUMA && rig.relays_off();
+    uint32_t sondu2 = bekle(KETTLE_YOK, 3000, sonuk);       // süzgeçli değer toparlanmadan yeniden kaldırıldı
+    uint32_t yandi2 = bekle(97.0f, 500, yanik);             // geri kondu
+    bool hala_koruma2 = rig.dev.kettle_durumu_ == KORUMA;
+    uint32_t normal = bekle(97.0f, 6000, [&] { return rig.dev.kettle_durumu_ == NORMAL; });
+    printf("  ölçüm: sönme %.2f sn · yanma %.2f sn (o anda %s) · yeniden kaldırınca sönme %.2f sn · yanma %.2f sn · NORMAL ondan %.2f sn sonra · tazelik %s · ihlal %ld\n",
+           sondu1 / 1000.0, yandi1 / 1000.0, hala_koruma ? "KORUMA, röleler kapalı" : "KORUMA DEĞİL", sondu2 / 1000.0, yandi2 / 1000.0, (normal + 500) / 1000.0,
+           rig.tazelik.state.c_str(), rig.violations);
+    check(sondu1 <= 500, "kaldırılınca mod lambası ve tazelik lambası yarım saniyede sönüyor");
+    check(yandi1 <= 500, "geri konunca ikisi de yarım saniyede eski hâline dönüyor");
+    check(hala_koruma, "lambalar yanmışken durum hâlâ KORUMA, röleler kapalı (süzgeçli sıcaklık bekleniyor)");
+    check(sondu2 <= 500, "süzgeçli değer toparlanmadan yeniden kaldırılınca lambalar yine sönüyor");
+    check(yandi2 <= 500 && hala_koruma2, "yeniden konunca lambalar yine hemen yanıyor");
+    check(normal != 0xFFFFFFFF && yanik(), "süzgeçli sıcaklık gelince NORMAL; lambalar aynı");
+    check(rig.tazelik.state == "Taze" && rig.dev.cay_demleme_durumu_ == DEMLEME_SICAKLIK_KORUMA, "iş kaldığı yerden sürüyor (Taze, sıcak tutma)");
+    check(rig.first_kritik_ms == 0 && rig.violations == 0, "alarm yok, ihlal yok");
+    return 0;
+  }
+
+  // Tek tük bozuk ham örnek kettle'ı "kalkmış" saydırmamalı; üç ardışık örnek (0,4 sn'lik gerçek kopma) saydırmalı.
+  int scenario_kettle_kisa_kopma()
+  {
+    Rig rig(true, true, false, 0, true);
+    HamZincir z;
+    z.sur(rig, 60.0f, 6000);
+    rig.su_kaynatma.publish_state(true);
+    z.sur(rig, 60.0f, 6000);
+    check(rig.has_ham, "bu sürümde ham okuma girişi var");
+    check(rig.dev.kettle_durumu_ == NORMAL && digitalRead(RELAY) == HIGH, "hazırlık: kaynatma sürüyor, röle açık");
+    // 1) tek bozuk örnek, 2) NaN, 3) iki ardışık bozuk örnek: hiçbiri KORUMA'ya geçirmemeli
+    int koruma_gorulen = 0;
+    auto izle = [&](float v, int n) {
+      for (int i = 0; i < n; i++)
+      {
+        z.ornek(rig, v);
+        if (rig.dev.kettle_durumu_ != NORMAL)
+          koruma_gorulen++;
+      }
+    };
+    izle(KETTLE_YOK, 1);
+    izle(60.0f, 8);
+    izle(NAN, 1);
+    izle(60.0f, 8);
+    izle(KETTLE_YOK, 2);
+    izle(60.0f, 16);
+    bool role_surdu = digitalRead(RELAY) == HIGH;
+    int kisa = koruma_gorulen;
+    // 4) üç ardışık bozuk örnek: kısa bir KORUMA, ardından iş sürer
+    int koruma_adim = 0;
+    for (int i = 0; i < 3; i++)
+    {
+      z.ornek(rig, KETTLE_YOK);
+      if (rig.dev.kettle_durumu_ == KORUMA)
+        koruma_adim++;
+    }
+    bool koruma_oldu = rig.dev.kettle_durumu_ == KORUMA && rig.relays_off();
+    z.sur(rig, 60.0f, 4000);
+    printf("  ölçüm: 1, NaN ve 2 bozuk örnekte KORUMA görülen örnek %d · röle %s · 3 bozuk örnekte KORUMA %s · sonra durum %s, röle %s, mod %s\n", kisa,
+           role_surdu ? "açık kaldı" : "KAPANDI", koruma_oldu ? "var" : "YOK", rig.kettle_durumu.state.c_str(), digitalRead(RELAY) == HIGH ? "açık" : "kapalı",
+           rig.aktif_mod.state.c_str());
+    check(kisa == 0 && role_surdu, "bir ya da iki bozuk örnek (ve tek NaN) kettle'ı kalkmış saydırmıyor");
+    check(koruma_oldu, "üç ardışık bozuk örnek KORUMA'ya geçiriyor, röleler kapanıyor");
+    check(rig.dev.kettle_durumu_ == NORMAL && digitalRead(RELAY) == HIGH && rig.dev.current_mode_ == MODE_SU_KAYNATMA, "okuma düzelince kaynatma kaldığı yerden sürüyor");
+    check(rig.first_kritik_ms == 0 && rig.violations == 0, "alarm yok, ihlal yok");
+    return 0;
+  }
+
+  // KRITIK alarmı kettle'ı en az 3 sn kaldırıp geri koyarak onaylanır. Hızlı algıyla KORUMA daha erken başlar; sürenin
+  // gerçek kaldırma süresini göstermesi için geri konma anı da ham okumadan alınır.
+  int scenario_kettle_hizli_kritik_onay()
+  {
+    Rig rig(true, true, false, 0, true);
+    drive_to_kritik(rig);
+    check(rig.has_ham, "bu sürümde ham okuma girişi var");
+    check(rig.dev.kettle_durumu_ == KRITIK, "hazırlık: KRITIK");
+    HamZincir z;
+    z.sur(rig, 80.0f, 6000);
+    bool hala_kritik0 = rig.dev.kettle_durumu_ == KRITIK;
+    // 1,5 sn kaldırıp koy: onay sayılmamalı (16 fazın hepsinde)
+    int erken_onay = 0;
+    for (int faz = 0; faz < 16; faz++)
+    {
+      z.faza_gel(rig, 80.0f, faz);
+      z.sur(rig, KETTLE_YOK, 1500);
+      z.sur(rig, 80.0f, 8000);
+      if (rig.dev.kettle_durumu_ != KRITIK)
+      {
+        erken_onay++;
+        break;
+      }
+    }
+    // 4 sn kaldırıp koy: onay
+    z.sur(rig, KETTLE_YOK, 4000);
+    bool kaldirilmisken_koruma = rig.dev.kettle_durumu_ == KORUMA;
+    z.sur(rig, 80.0f, 8000);
+    long on = rig.relay_on_ms;
+    z.sur(rig, 60.0f, 20000);
+    printf("  ölçüm: 1,5 sn'lik kaldırışlarda erken onay %d · 4 sn'lik kaldırıştan sonra durum %s · aktif_mod %s · sonraki 20 sn'de röle %s\n", erken_onay,
+           rig.kettle_durumu.state.c_str(), rig.aktif_mod.state.c_str(), rig.relay_on_ms == on ? "açılmadı" : "AÇILDI");
+    check(hala_kritik0, "ham örnekler gelirken KRITIK sürüyor");
+    check(erken_onay == 0, "1,5 sn'lik kaldırış alarmı onaylamıyor (döngünün hiçbir anında)");
+    check(kaldirilmisken_koruma, "kaldırılmışken KORUMA");
+    check(rig.dev.kettle_durumu_ == NORMAL && !rig.dev.kritik_sound_active_, "4 sn kaldırıp koymak alarmı onaylıyor");
+    check(rig.dev.current_mode_ == MODE_KAPALI && rig.relay_on_ms == on, "cihaz boşta, ısıtma kendiliğinden başlamadı");
+    check(rig.violations == 0, "ihlal yok");
+    return 0;
+  }
+
   int usage()
   {
     printf("senaryolar: replay-aksam replay-yeniden az-su yarim-litre kuru az-su-sicrama tek-sicrama ardisik-sicrama toparlanma-adimi\n"
@@ -2299,7 +2573,8 @@ namespace
            "            replay-3eki-kaynatma kuru-sicak-tutmada cay-lamba-sirasi cay-lamba-seviye cay-fazla-basis\n"
            "            cay-ha-sicak-su kritik-bekleyen-basis ses-tetik-suresi cay-az-su\n"
            "            mama-sicak-su mama-40 mama-ilik mama-yeniden mama-kaldirilmisken-sicak\n"
-           "            cay-bos-hazne-sessiz kahve-su-bitince kahve-sureli kahve-tus kahve-bos-hazne kahve-gecis az-su-sessiz\n");
+           "            cay-bos-hazne-sessiz kahve-su-bitince kahve-sureli kahve-tus kahve-bos-hazne kahve-gecis az-su-sessiz\n"
+           "            kettle-hizli-algi kettle-hizli-algi-yok kettle-kisa-kopma kettle-hizli-kritik-onay kettle-geri-lamba\n");
     return 2;
   }
 } // namespace
@@ -2318,6 +2593,16 @@ int main(int argc, char **argv)
     scenario_replay_yeniden();
   else if (s == "az-su")
     scenario_su_azligi(2.26f, true, true, 9000, "az su (yazarın ölçümü: 0.1 L ≈ 2.26 °C/sn) KRITIK'e geçiriyor");
+  else if (s == "kettle-hizli-algi")
+    scenario_kettle_hizli_algi(true);
+  else if (s == "kettle-hizli-algi-yok")
+    scenario_kettle_hizli_algi(false);
+  else if (s == "kettle-geri-lamba")
+    scenario_kettle_geri_lamba();
+  else if (s == "kettle-kisa-kopma")
+    scenario_kettle_kisa_kopma();
+  else if (s == "kettle-hizli-kritik-onay")
+    scenario_kettle_hizli_kritik_onay();
   else if (s == "az-su-sessiz")
     scenario_su_azligi(2.26f, true, true, 9000, "az su, konuşma sesi kapalı: KRITIK'e geçiriyor", false);
   else if (s == "yarim-litre")
